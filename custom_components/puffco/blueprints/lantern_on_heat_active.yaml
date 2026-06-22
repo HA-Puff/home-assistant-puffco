@@ -1,0 +1,24 @@
+blueprint:
+  name: Puffco — flash lantern when session starts
+  description: Turn the lantern on when a heat session begins.
+  domain: automation
+  source_url: https://github.com/HA-Puff/home-assistant-puffco
+  input:
+    puffco_device:
+      name: Puffco device
+      selector:
+        device:
+          integration: puffco
+  trigger:
+    - platform: device
+      domain: puffco
+      device_id: !input puffco_device
+      type: session_started
+  variables:
+    lantern: "{{ device_entities(input.puffco_device) | select('search', 'lantern') | list | first }}"
+  action:
+    - condition: template
+      value_template: "{{ lantern is not none }}"
+    - service: light.turn_on
+      target:
+        entity_id: "{{ lantern }}"

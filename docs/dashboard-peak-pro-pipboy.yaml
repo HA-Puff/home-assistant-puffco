@@ -1,0 +1,293 @@
+# Pip-Boy panel for Peak Pro 00059
+# Paste into HA: Settings → Dashboards → Add dashboard → Raw configuration editor
+# Requires: Mushroom Cards, theme Pip-Boy (optional card_mod for green borders)
+#
+# Device slug: peak_pro_00059_0c_43_14_b7_91_9c
+
+title: Peak Pro
+theme: Pip-Boy
+path: peak-pro-pipboy
+type: panel
+cards:
+  - type: grid
+    square: false
+    columns: 3
+    cards:
+      # ── COLUMN 1: LINK & CORE TELEMETRY ──────────────────────────────
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-template-card
+            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+            primary: "=== [ NODE_PEAK: VAPORIZATION_CORE ] ==="
+            secondary: >-
+              SYS_STATE: {{ states(entity) | replace('_', ' ') | upper }}
+              // HEATER: {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature') }}°C
+              // BATT: {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery') }}%
+            icon: mdi:fire-circle
+            icon_color: >-
+              {% set s = states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') %}
+              {% if s in ['heat_cycle_active'] %}red
+              {% elif s in ['heat_cycle_preheat', 'heat_cycle_fade'] %}amber
+              {% elif s == 'idle' %}green
+              {% else %}blue{% endif %}
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                }
+
+          - type: entities
+            title: "=== [ UPLINK_DIAGNOSTICS ] ==="
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - type: section
+                label: BLE MATRIX STATUS
+              - entity: binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_connected
+                name: "> GATT_SESSION_LINK"
+              - entity: binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_advertising
+                name: "> BLE_BEACON_BROADCAST"
+              - entity: binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_charging
+                name: "> DOCK_RECHARGE_MATRIX"
+              - type: section
+                label: CORE FIRMWARE BUS
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_firmware
+                name: "> FW_REVISION_STRING"
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+                name: "> OPERATING_STATE_REGISTER"
+
+          - type: entities
+            title: "=== [ THERMAL_TELEMETRY ] ==="
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature
+                name: "> LIVE_HEATER_TEMP_PROBE"
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery
+                name: "> POWER_CELL_SOC"
+              - entity: select.peak_pro_00059_0c_43_14_b7_91_9c_active_profile
+                name: ">> ACTIVE_HEAT_PROFILE_BUS"
+
+          - type: custom:mushroom-template-card
+            primary: ">> TACTICAL SESSION DECK"
+            secondary: HEAT CYCLE EXECUTION CORE
+            icon: mdi:rocket-launch
+            icon_color: green
+            disabled: true
+
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: button.peak_pro_00059_0c_43_14_b7_91_9c_start_session
+                primary: ""
+                secondary: IGNITE
+                icon: mdi:fire
+                icon_color: red
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.peak_pro_00059_0c_43_14_b7_91_9c_start_session
+              - type: custom:mushroom-template-card
+                entity: button.peak_pro_00059_0c_43_14_b7_91_9c_abort_session
+                primary: ""
+                secondary: ABORT
+                icon: mdi:stop-circle
+                icon_color: amber
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.peak_pro_00059_0c_43_14_b7_91_9c_abort_session
+              - type: custom:mushroom-template-card
+                entity: button.peak_pro_00059_0c_43_14_b7_91_9c_reconnect
+                primary: ""
+                secondary: LINK
+                icon: mdi:bluetooth-connect
+                icon_color: blue
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.peak_pro_00059_0c_43_14_b7_91_9c_reconnect
+
+      # ── COLUMN 2: HEAT PROFILES ──────────────────────────────────────
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: "=== [ HEAT_PROFILE_MATRIX ] ==="
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - type: section
+                label: TEMPERATURE SETPOINT REGISTERS
+              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_1_temperature
+                name: ">> PROFILE_01_SETPOINT"
+              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_2_temperature
+                name: ">> PROFILE_02_SETPOINT"
+              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_3_temperature
+                name: ">> PROFILE_03_SETPOINT"
+              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_4_temperature
+                name: ">> PROFILE_04_SETPOINT"
+
+          - type: custom:mushroom-template-card
+            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature
+            primary: "=== [ THERMAL_RAMP_MONITOR ] ==="
+            secondary: >-
+              {% set s = states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') %}
+              {% if s in ['heat_cycle_preheat', 'heat_cycle_active', 'heat_cycle_fade'] %}
+              CYCLE ACTIVE — {{ states(entity) }}°C LIVE
+              {% else %}
+              STANDBY — CHAMBER {{ states(entity) }}°C
+              {% endif %}
+            icon: mdi:thermometer-lines
+            icon_color: >-
+              {% set s = states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') %}
+              {% if s == 'heat_cycle_active' %}red
+              {% elif s in ['heat_cycle_preheat', 'heat_cycle_fade'] %}amber
+              {% else %}green{% endif %}
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                }
+
+          - type: gauge
+            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature
+            name: CHAMBER TEMP
+            unit: "°C"
+            min: 0
+            max: 350
+            severity:
+              green: 0
+              yellow: 200
+              red: 280
+            needle: true
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                  --primary-text-color: #00ff66 !important;
+                }
+
+          - type: entities
+            title: "=== [ STEALTH_SUBSYSTEM ] ==="
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - entity: switch.peak_pro_00059_0c_43_14_b7_91_9c_stealth_mode
+                name: ">> CLOAKING_FIELD_GENERATOR"
+
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+                state:
+                  - heat_cycle_preheat
+                  - heat_cycle_active
+                  - heat_cycle_fade
+            card:
+              type: markdown
+              content: |
+                ## ⚠ HEAT CYCLE IN PROGRESS
+                **STATE:** {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') | replace('_', ' ') | upper }}
+                **TEMP:** {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature') }} °C
+              card_mod:
+                style: |
+                  ha-card {
+                    border: 2px solid #ff6600 !important;
+                    background: rgba(0, 40, 0, 0.85) !important;
+                    color: #00ff66 !important;
+                  }
+
+      # ── COLUMN 3: ODOMETER & LANTERN ─────────────────────────────────
+      - type: vertical-stack
+        cards:
+          - type: entities
+            title: "=== [ SESSION_ODOMETER ] ==="
+            show_header_toggle: false
+            state_color: true
+            entities:
+              - type: section
+                label: DAB COUNT REGISTERS
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_total_dabs
+                name: "> LIFETIME_DAB_COUNTER"
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_trip_dabs
+                name: "> TRIP_DAB_COUNTER"
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_dabs_per_day
+                name: "> DAILY_THROUGHPUT_AVG"
+              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_daily_dabs
+                name: "> DAILY_METER_ROLLUP"
+
+          - type: custom:mushroom-template-card
+            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery
+            primary: "=== [ POWER_CELL_STATUS ] ==="
+            secondary: >-
+              {% if is_state('binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_charging', 'on') %}
+              RECHARGING — {{ state_attr('sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery', 'charge_eta_minutes') | default('?', true) }} MIN TO FULL
+              {% else %}
+              SOC: {{ states(entity) }}% — {{ state_attr('sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery', 'charge_state') | default('off dock', true) | upper }}
+              {% endif %}
+            icon: mdi:battery-charging
+            icon_color: >-
+              {% if is_state('binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_charging', 'on') %}green
+              {% elif states(entity) | int(0) < 25 %}red
+              {% elif states(entity) | int(0) < 50 %}amber
+              {% else %}green{% endif %}
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                }
+
+          - type: gauge
+            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery
+            name: POWER CELL
+            unit: "%"
+            min: 0
+            max: 100
+            severity:
+              green: 50
+              yellow: 25
+              red: 0
+            needle: true
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                  --primary-text-color: #00ff66 !important;
+                }
+
+          - type: custom:mushroom-template-card
+            primary: ">> LANTERN_MOOD_LIGHT_CORE"
+            secondary: LOGO / AMBIENT ILLUMINATION BUS
+            icon: mdi:lava-lamp
+            icon_color: purple
+            disabled: true
+
+          - type: light
+            entity: light.peak_pro_00059_0c_43_14_b7_91_9c_lantern
+            name: LANTERN OUTPUT
+            icon: mdi:lava-lamp
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                }
+
+          - type: custom:mushroom-template-card
+            entity: light.peak_pro_00059_0c_43_14_b7_91_9c_lantern
+            primary: ">> LANTERN_STATUS"
+            secondary: >-
+              {% if is_state(entity, 'on') %}
+              ACTIVE — {{ state_attr(entity, 'effect') | default('solid', true) | upper }}
+              {% else %}STANDBY{% endif %}
+            icon: mdi:lava-lamp
+            icon_color: >-
+              {% if is_state(entity, 'on') %}purple{% else %}disabled{% endif %}
+            card_mod:
+              style: |
+                ha-card {
+                  border: 1px solid #00ff66 !important;
+                  filter: hue-rotate(90deg) saturate(1.3) contrast(1.1) brightness(0.95);
+                }

@@ -1,0 +1,16 @@
+{
+  "domain": "puffco",
+  "name": "Puffco",
+  "bluetooth": [
+    { "service_uuid": "e276967f-ea8a-478a-a92e-d78f5dd15dd5" },
+    { "service_uuid": "06caf9c0-74d3-454f-9be9-e30cd999c17a" }
+  ],
+  "codeowners": ["@HA-Puff"],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/HA-Puff/home-assistant-puffco",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": ["bleak-retry-connector>=3.5.0"],
+  "version": "1.0.0"
+}

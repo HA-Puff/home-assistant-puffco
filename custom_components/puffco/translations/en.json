@@ -1,0 +1,111 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Set up Puffco",
+        "description": "Select a discovered Puffco device, or choose to enter a MAC address manually. Put the device in pairing mode (hold power until the light bar glows blue).",
+        "data": {
+          "address": "Device"
+        }
+      },
+      "manual": {
+        "title": "Set up Puffco",
+        "description": "Enter the Bluetooth MAC address of your Puffco device. Put the device in pairing mode (hold power until the light bar glows blue).",
+        "data": {
+          "mac": "Bluetooth MAC address"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Set up Puffco",
+        "description": "Do you want to set up {name}? Put the device in pairing mode (hold power until the light bar glows blue) before continuing."
+      },
+      "confirm": {
+        "title": "Reconnect Puffco",
+        "description": "Home Assistant could not reconnect over Bluetooth. Wake the Peak, close the phone app, then confirm to retry with bond reset."
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect or authenticate to the device.",
+      "invalid_mac": "Invalid MAC address format."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "cannot_connect": "Could not connect or authenticate to the device."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Puffco options",
+        "data": {
+          "show_diagnostics": "Show diagnostic entities (advertising, connected, firmware, operating state)",
+          "block_start_while_charging": "Block starting a session while charging",
+          "fast_poll": "Faster background polling when idle (uses more Bluetooth traffic)"
+        }
+      }
+    }
+  },
+  "issues": {
+    "reconnect_failed": {
+      "title": "Puffco {name} disconnected",
+      "description": "Bluetooth reconnect failed: {error}. Wake the Peak and use Reconnect, or run the repair action."
+    }
+  },
+  "device_automation": {
+    "action_type": {
+      "start_session": "Start heat session",
+      "abort_session": "Abort heat session",
+      "reconnect": "Reconnect Bluetooth",
+      "set_profile": "Set active profile"
+    },
+    "trigger_type": {
+      "session_started": "Heat session started",
+      "session_finished": "Heat session finished",
+      "disconnected": "Bluetooth disconnected",
+      "charging_started": "Started charging"
+    }
+  },
+  "entity": {
+    "climate": {
+      "heater": { "name": "Heater" }
+    },
+    "event": {
+      "session": { "name": "Session" }
+    },
+    "sensor": {
+      "total_dabs": { "name": "Total dabs" },
+      "trip_dabs": { "name": "Trip dabs" },
+      "dabs_per_day": { "name": "Dabs per day" },
+      "heater_temp": { "name": "Heater temperature" },
+      "heat_time_remaining": { "name": "Heat time remaining" },
+      "heat_cycle_timer": { "name": "Heat cycle timer" },
+      "battery": { "name": "Battery" },
+      "firmware": { "name": "Firmware" },
+      "operating_state": { "name": "Operating state" }
+    },
+    "binary_sensor": {
+      "advertising": { "name": "Advertising" },
+      "connected": { "name": "Connected" },
+      "charging": { "name": "Charging" }
+    },
+    "number": {
+      "profile_temp": { "name": "Profile {profile} temperature" },
+      "profile_time": { "name": "Profile {profile} duration" }
+    },
+    "button": {
+      "reconnect": { "name": "Reconnect" },
+      "start_session": { "name": "Start session" },
+      "abort_session": { "name": "Abort session" }
+    },
+    "light": {
+      "lantern": { "name": "Lantern" }
+    },
+    "select": {
+      "active_profile": { "name": "Active profile" }
+    },
+    "switch": {
+      "stealth_mode": { "name": "Stealth mode" }
+    }
+  }
+}

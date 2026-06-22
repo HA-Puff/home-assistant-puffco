@@ -1,0 +1,26 @@
+blueprint:
+  name: Puffco — notify when charging starts
+  description: Send a notification when the Peak is placed on the charger.
+  domain: automation
+  source_url: https://github.com/HA-Puff/home-assistant-puffco
+  input:
+    puffco_device:
+      name: Puffco device
+      selector:
+        device:
+          integration: puffco
+    notify_service:
+      name: Notification service
+      description: e.g. notify.mobile_app_phone
+      selector:
+        text:
+  trigger:
+    - platform: device
+      domain: puffco
+      device_id: !input puffco_device
+      type: charging_started
+  action:
+    - service: !input notify_service
+      data:
+        title: Puffco charging
+        message: Your Peak is charging on the dock.

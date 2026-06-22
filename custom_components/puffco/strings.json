@@ -1,0 +1,33 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Set up Puffco",
+        "description": "Select a discovered Puffco device, or choose to enter a MAC address manually. Put the device in pairing mode (hold power until the light bar glows blue).",
+        "data": {
+          "address": "Device"
+        }
+      },
+      "manual": {
+        "title": "Set up Puffco",
+        "description": "Enter the Bluetooth MAC address of your Puffco device. Put the device in pairing mode (hold power until the light bar glows blue).",
+        "data": {
+          "mac": "Bluetooth MAC address"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Set up Puffco",
+        "description": "Do you want to set up {name}? Put the device in pairing mode (hold power until the light bar glows blue) before continuing."
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect or authenticate to the device.",
+      "invalid_mac": "Invalid MAC address format."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "cannot_connect": "Could not connect or authenticate to the device."
+    }
+  }
+}

@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+logs/
+_ref/
+*.egg-info/
+dist/
+build/
+
+# Local / dev only (exclude from public repo if desired)
+puffco-ble/.venv/
+puffco-ble/logs/
+Existing-Integration/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*

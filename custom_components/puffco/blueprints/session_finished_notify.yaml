@@ -1,0 +1,26 @@
+blueprint:
+  name: Puffco — notify when session finishes
+  description: Send a notification when a Peak Pro heat session completes.
+  domain: automation
+  source_url: https://github.com/HA-Puff/home-assistant-puffco
+  input:
+    puffco_device:
+      name: Puffco device
+      selector:
+        device:
+          integration: puffco
+    notify_service:
+      name: Notification service
+      description: e.g. notify.mobile_app_phone
+      selector:
+        text:
+  trigger:
+    - platform: device
+      domain: puffco
+      device_id: !input puffco_device
+      type: session_finished
+  action:
+    - service: !input notify_service
+      data:
+        title: Peak session finished
+        message: Your Puffco heat session has completed.

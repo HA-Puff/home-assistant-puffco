@@ -1,0 +1,47 @@
+start_session:
+  target:
+    device:
+      integration: puffco
+  fields:
+    profile:
+      selector:
+        number:
+          min: 1
+          max: 4
+          step: 1
+          mode: box
+      name: Profile
+      description: Optional profile to select before starting (1–4).
+
+abort_session:
+  target:
+    device:
+      integration: puffco
+
+set_profile:
+  target:
+    device:
+      integration: puffco
+  fields:
+    profile:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 4
+          step: 1
+          mode: box
+      name: Profile
+      description: Active heat profile (1–4).
+
+reconnect:
+  target:
+    device:
+      integration: puffco
+  fields:
+    clear_bond:
+      default: false
+      selector:
+        boolean:
+      name: Clear bond
+      description: Clear stored BLE bond before reconnecting (use if pairing fails).
