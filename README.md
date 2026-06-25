@@ -4,7 +4,11 @@ Unofficial Bluetooth integration for **Puffco Peak Pro** in [Home Assistant](htt
 
 Control heat sessions, profiles, lantern lighting, and read dab metrics locally — no cloud account required.
 
+> **Beta.** This integration is under active development. Expect rough edges, breaking changes between releases, and report issues on [GitHub](https://github.com/HA-Puff/home-assistant-puffco/issues).
+>
 > **Not affiliated with Puffco.** Use at your own risk. MIT licensed.
+>
+> **How this was built.** Much of the code was written with AI assistance (Cursor) and **manually reviewed** before merge. The maintainer has prior Python experience and tests changes on real hardware, but this is not a from-scratch hand-written project — review the code and use your own judgment before relying on it for anything critical.
 
 ## Install
 
