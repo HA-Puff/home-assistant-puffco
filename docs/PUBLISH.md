@@ -62,3 +62,14 @@ https://github.com/HA-Puff/home-assistant-puffco
 ```
 
 Category: **Integration** → Install **Puffco** → Restart Home Assistant.
+
+### Repository metadata (CI / HACS)
+
+HACS requires a GitHub **description** and **topics** on the repo (not in `README.md`). Values live in [`.github/metadata.json`](../.github/metadata.json) and are applied by the **Sync repository metadata** workflow on push to `main`.
+
+If HACS still reports missing description/topics:
+
+1. **Settings → Actions → General → Workflow permissions** → **Read and write permissions** (needed for `GITHUB_TOKEN` to update repo settings).
+2. **Actions → Sync repository metadata → Run workflow**, or set manually under **Settings → General → About**:
+   - Description: `Unofficial Home Assistant integration for Puffco Peak Pro over Bluetooth LE (beta).`
+   - Topics: `home-assistant`, `hacs`, `homeassistant`, `bluetooth`, `integration`, `puffco`

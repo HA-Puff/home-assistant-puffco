@@ -9,8 +9,34 @@ on:
 jobs:
   hacs:
     runs-on: ubuntu-latest
+    permissions:
+      administration: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Sync repository metadata for HACS
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          with open(".github/metadata.json", encoding="utf-8") as fh:
+              meta = json.load(fh)
+
+          subprocess.run(
+              ["gh", "repo", "edit", os.environ["GITHUB_REPOSITORY"], "--description", meta["description"]],
+              check=True,
+          )
+
+          args = ["gh", "api", "--method", "PUT", f"repos/{os.environ['GITHUB_REPOSITORY']}/topics"]
+          for topic in meta["topics"]:
+              args.extend(["-f", f"names[]={topic}"])
+          subprocess.run(args, check=True)
+          PY
       - name: HACS validation
         uses: hacs/action@main
         with:

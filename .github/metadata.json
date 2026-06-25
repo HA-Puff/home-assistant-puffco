@@ -1,0 +1,11 @@
+{
+  "description": "Unofficial Home Assistant integration for Puffco Peak Pro over Bluetooth LE (beta).",
+  "topics": [
+    "home-assistant",
+    "hacs",
+    "homeassistant",
+    "bluetooth",
+    "integration",
+    "puffco"
+  ]
+}
