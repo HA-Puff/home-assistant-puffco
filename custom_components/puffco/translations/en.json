@@ -41,10 +41,7 @@
       "cannot_connect": "Could not connect or authenticate to the device."
     },
     "progress": {
-      "scanning": {
-        "title": "Scanning for Puffco devices",
-        "description": "Wake your Peak (blue pairing bar). Listening for {timeout} seconds…"
-      }
+      "scanning": "Scanning for Puffco devices. Wake your Peak (blue pairing bar). Listening for {timeout} seconds…"
     }
   },
   "options": {
@@ -89,12 +86,16 @@
     "event": {
       "session": {
         "name": "Session",
-        "event_types": {
-          "started": { "name": "Heat session started" },
-          "finished": { "name": "Heat session finished" },
-          "heat_cycle_preheat": { "name": "Heat cycle preheat" },
-          "heat_cycle_active": { "name": "Heat cycle active" },
-          "heat_cycle_fade": { "name": "Heat cycle fade" }
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "started": "Heat session started",
+              "finished": "Heat session finished",
+              "heat_cycle_preheat": "Heat cycle preheat",
+              "heat_cycle_active": "Heat cycle active",
+              "heat_cycle_fade": "Heat cycle fade"
+            }
+          }
         }
       }
     },
@@ -150,6 +151,70 @@
     },
     "text": {
       "profile_name": { "name": "Profile {profile} name" }
+    }
+  },
+  "services": {
+    "start_session": {
+      "name": "Start session",
+      "description": "Start a heat session on a Puffco device.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Puffco device to start a heat session on."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Optional profile to select before starting (1–4)."
+        }
+      }
+    },
+    "abort_session": {
+      "name": "Abort session",
+      "description": "Abort the active heat session on a Puffco device.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Puffco device to abort the active heat session on."
+        }
+      }
+    },
+    "boost_session": {
+      "name": "Boost session",
+      "description": "Boost the active heat session on a Puffco device.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Puffco device to boost during an active heat session."
+        }
+      }
+    },
+    "set_profile": {
+      "name": "Set profile",
+      "description": "Set the active heat profile on a Puffco device.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Puffco device to change the active profile on."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Active heat profile (1–4)."
+        }
+      }
+    },
+    "reconnect": {
+      "name": "Reconnect",
+      "description": "Reconnect a Puffco device over Bluetooth.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "Puffco device to reconnect over Bluetooth."
+        },
+        "clear_bond": {
+          "name": "Clear bond",
+          "description": "Clear stored BLE bond before reconnecting (use if pairing fails)."
+        }
+      }
     }
   }
 }

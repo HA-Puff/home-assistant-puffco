@@ -1,8 +1,12 @@
 start_session:
-  target:
-    device:
-      integration: puffco
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: puffco
+      name: Device
+      description: Puffco device to start a heat session on.
     profile:
       selector:
         number:
@@ -14,20 +18,34 @@ start_session:
       description: Optional profile to select before starting (1–4).
 
 abort_session:
-  target:
-    device:
-      integration: puffco
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: puffco
+      name: Device
+      description: Puffco device to abort the active heat session on.
 
 boost_session:
-  target:
-    device:
-      integration: puffco
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: puffco
+      name: Device
+      description: Puffco device to boost during an active heat session.
 
 set_profile:
-  target:
-    device:
-      integration: puffco
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: puffco
+      name: Device
+      description: Puffco device to change the active profile on.
     profile:
       required: true
       selector:
@@ -40,10 +58,14 @@ set_profile:
       description: Active heat profile (1–4).
 
 reconnect:
-  target:
-    device:
-      integration: puffco
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: puffco
+      name: Device
+      description: Puffco device to reconnect over Bluetooth.
     clear_bond:
       default: false
       selector:

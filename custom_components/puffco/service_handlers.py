@@ -9,7 +9,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 import homeassistant.helpers.config_validation as cv
 
 from .const import DOMAIN
-from .helpers import get_coordinator_from_service_call
+from .helpers import get_coordinator_for_device
 
 SERVICE_START_SESSION = "start_session"
 SERVICE_ABORT_SESSION = "abort_session"
@@ -18,21 +18,25 @@ SERVICE_RECONNECT = "reconnect"
 
 SERVICE_BOOST_SESSION = "boost_session"
 
-SERVICE_START_SESSION_SCHEMA = cv.make_entity_service_schema(
+SERVICE_DEVICE_SCHEMA = vol.Schema({vol.Required("device_id"): cv.device_id})
+
+SERVICE_START_SESSION_SCHEMA = SERVICE_DEVICE_SCHEMA.extend(
     {vol.Optional("profile"): vol.All(vol.Coerce(int), vol.Range(min=1, max=4))}
 )
 
-SERVICE_SET_PROFILE_SCHEMA = cv.make_entity_service_schema(
+SERVICE_SET_PROFILE_SCHEMA = SERVICE_DEVICE_SCHEMA.extend(
     {vol.Required("profile"): vol.All(vol.Coerce(int), vol.Range(min=1, max=4))}
 )
 
-SERVICE_RECONNECT_SCHEMA = cv.make_entity_service_schema(
+SERVICE_RECONNECT_SCHEMA = SERVICE_DEVICE_SCHEMA.extend(
     {vol.Optional("clear_bond", default=False): cv.boolean}
 )
 
 
 async def _async_get_coordinator(call: ServiceCall):
-    coordinator, _entry_id = get_coordinator_from_service_call(call.hass, call)
+    coordinator, _entry_id = get_coordinator_for_device(
+        call.hass, call.data["device_id"]
+    )
     if coordinator is None:
         raise ServiceValidationError(
             "No Puffco device found for this service call target"
@@ -83,13 +87,13 @@ def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_ABORT_SESSION,
         async_abort_session,
-        schema=cv.make_entity_service_schema({}),
+        schema=SERVICE_DEVICE_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_BOOST_SESSION,
         async_boost_session,
-        schema=cv.make_entity_service_schema({}),
+        schema=SERVICE_DEVICE_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,
