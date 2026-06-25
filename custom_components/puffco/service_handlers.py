@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import voluptuous as vol
 
+from homeassistant.const import ATTR_DEVICE_ID
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 import homeassistant.helpers.config_validation as cv
@@ -18,7 +19,7 @@ SERVICE_RECONNECT = "reconnect"
 
 SERVICE_BOOST_SESSION = "boost_session"
 
-SERVICE_DEVICE_SCHEMA = vol.Schema({vol.Required("device_id"): cv.device_id})
+SERVICE_DEVICE_SCHEMA = vol.Schema({vol.Required(ATTR_DEVICE_ID): cv.string})
 
 SERVICE_START_SESSION_SCHEMA = SERVICE_DEVICE_SCHEMA.extend(
     {vol.Optional("profile"): vol.All(vol.Coerce(int), vol.Range(min=1, max=4))}
@@ -35,7 +36,7 @@ SERVICE_RECONNECT_SCHEMA = SERVICE_DEVICE_SCHEMA.extend(
 
 async def _async_get_coordinator(call: ServiceCall):
     coordinator, _entry_id = get_coordinator_for_device(
-        call.hass, call.data["device_id"]
+        call.hass, call.data[ATTR_DEVICE_ID]
     )
     if coordinator is None:
         raise ServiceValidationError(
