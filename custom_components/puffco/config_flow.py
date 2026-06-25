@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import re
@@ -18,44 +19,118 @@ if _VENDORED_DIR not in sys.path:
 import voluptuous as vol
 from homeassistant import config_entries
 import homeassistant.helpers.config_validation as cv
+from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import (
+    BluetoothChange,
+    BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
 from homeassistant.const import CONF_ADDRESS, CONF_MAC
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     CONF_BLOCK_START_WHILE_CHARGING,
     CONF_FAST_POLL,
+    CONF_IDLE_DISCONNECT,
     CONF_SHOW_DIAGNOSTICS,
+    CONF_WAKE_ON_COMMAND,
     DEFAULT_BLOCK_START_WHILE_CHARGING,
     DEFAULT_FAST_POLL,
+    DEFAULT_IDLE_DISCONNECT,
     DEFAULT_SHOW_DIAGNOSTICS,
+    DEFAULT_WAKE_ON_COMMAND,
     DOMAIN,
 )
 from .coordinator import CannotConnect, validate_connection
-from puffco_ble.constants import (
-    LORAX_SERVICE_UUID,
-    PEAK_PRO_MAC_PREFIXES,
-    SERVICE_UUID,
-)
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
+from puffco_ble.protocol import is_peak_pro_advertisement
 
 MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
-_PUFFCO_SERVICE_UUIDS = {SERVICE_UUID.lower(), LORAX_SERVICE_UUID.lower()}
+OPTION_SCAN = "__scan__"
+OPTION_MANUAL = "__manual__"
+SCAN_TIMEOUT_S = 15
+
+
+def _ble_device(info: BluetoothServiceInfoBleak) -> BLEDevice:
+    if device := getattr(info, "device", None):
+        return device
+    return BLEDevice(info.address, info.name or info.address, {}, -1, -1, -1)
+
+
+def _advertisement(info: BluetoothServiceInfoBleak) -> AdvertisementData:
+    if adv := getattr(info, "advertisement", None):
+        return adv
+    return AdvertisementData(
+        local_name=info.name,
+        manufacturer_data=info.manufacturer_data,
+        service_data=info.service_data,
+        service_uuids=list(info.service_uuids),
+        tx_power=info.tx_power,
+        rssi=info.rssi,
+        platform_data=(),
+    )
 
 
 def _is_puffco(info: BluetoothServiceInfoBleak) -> bool:
-    if any(
-        info.address.upper().startswith(p.upper()) for p in PEAK_PRO_MAC_PREFIXES
-    ):
-        return True
-    if _PUFFCO_SERVICE_UUIDS & {u.lower() for u in info.service_uuids}:
-        return True
-    name = (info.name or "").lower()
-    return "puffco" in name or "peak" in name
+    """True when an advert looks like a Puffco Peak / Proxy."""
+    return is_peak_pro_advertisement(_ble_device(info), _advertisement(info))
+
+
+def _device_label(info: BluetoothServiceInfoBleak) -> str:
+    name = info.name or "Puffco"
+    if info.rssi is not None:
+        return f"{name} ({info.address}) · {info.rssi} dBm"
+    return f"{name} ({info.address})"
+
+
+async def _async_scan_puffco_devices(
+    hass: HomeAssistant, *, exclude: set[str]
+) -> dict[str, str]:
+    """Collect Puffco-looking devices from HA cache and an active scan."""
+    found: dict[str, BluetoothServiceInfoBleak] = {}
+
+    def _maybe_add(info: BluetoothServiceInfoBleak) -> None:
+        if info.address in exclude:
+            return
+        if not _is_puffco(info):
+            return
+        existing = found.get(info.address)
+        if existing is None or (info.rssi or -999) > (existing.rssi or -999):
+            found[info.address] = info
+
+    for connectable in (True, False):
+        for info in async_discovered_service_info(hass, connectable=connectable):
+            _maybe_add(info)
+
+    @callback
+    def _on_device(
+        service_info: BluetoothServiceInfoBleak, _change: BluetoothChange
+    ) -> None:
+        _maybe_add(service_info)
+
+    unregister = bluetooth.async_register_callback(
+        hass,
+        _on_device,
+        {"connectable": True},
+        BluetoothScanningMode.ACTIVE,
+    )
+    try:
+        await asyncio.sleep(SCAN_TIMEOUT_S)
+    finally:
+        unregister()
+
+    return {
+        address: _device_label(info)
+        for address, info in sorted(
+            found.items(),
+            key=lambda item: item[1].rssi if item[1].rssi is not None else -999,
+            reverse=True,
+        )
+    }
 
 
 class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -71,6 +146,26 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._discovery: BluetoothServiceInfoBleak | None = None
         self._discovered: dict[str, str] = {}
+
+    def _configured_addresses(self) -> set[str]:
+        return {address.upper() for address in self._async_current_ids()}
+
+    def _load_cached_devices(self) -> None:
+        self._discovered = {}
+        exclude = self._configured_addresses()
+        for connectable in (True, False):
+            for info in async_discovered_service_info(
+                self.hass, connectable=connectable
+            ):
+                if info.address in exclude or not _is_puffco(info):
+                    continue
+                self._discovered[info.address] = _device_label(info)
+
+    def _device_picker_schema(self) -> vol.Schema:
+        options = dict(self._discovered)
+        options[OPTION_SCAN] = "Scan for devices…"
+        options[OPTION_MANUAL] = "Enter MAC address manually"
+        return vol.Schema({vol.Required(CONF_ADDRESS): vol.In(options)})
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -103,28 +198,61 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> config_entries.ConfigFlowResult:
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
-            if address == "__manual__":
+            if address == OPTION_MANUAL:
                 return await self.async_step_manual()
+            if address == OPTION_SCAN:
+                return await self.async_step_scan()
             return await self._async_validate_and_create(
                 address, self._discovered.get(address, address)
             )
 
-        current = self._async_current_ids()
-        self._discovered = {}
-        for info in async_discovered_service_info(self.hass):
-            if info.address in current:
-                continue
-            if _is_puffco(info):
-                self._discovered[info.address] = f"{info.name or 'Puffco'} ({info.address})"
-
-        if not self._discovered:
-            return await self.async_step_manual()
-
-        options = dict(self._discovered)
-        options["__manual__"] = "Enter MAC address manually"
+        self._load_cached_devices()
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_ADDRESS): vol.In(options)}),
+            data_schema=self._device_picker_schema(),
+        )
+
+    async def async_step_scan(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Actively scan for Puffco devices."""
+        if user_input is not None:
+            if not self._discovered:
+                return await self.async_step_scan_failed()
+            return await self.async_step_user()
+
+        self.context["title_placeholders"] = {"timeout": str(SCAN_TIMEOUT_S)}
+        return self.async_show_progress(
+            step_id="scan",
+            progress_action="scanning",
+            progress_task=self._async_run_scan(),
+        )
+
+    async def _async_run_scan(self) -> None:
+        self._discovered = await _async_scan_puffco_devices(
+            self.hass, exclude=self._configured_addresses()
+        )
+
+    async def async_step_scan_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        if user_input is not None:
+            if user_input["action"] == "retry":
+                return await self.async_step_scan()
+            return await self.async_step_manual()
+
+        return self.async_show_form(
+            step_id="scan_failed",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("action"): vol.In(
+                        {
+                            "retry": "Scan again",
+                            OPTION_MANUAL: "Enter MAC address manually",
+                        }
+                    )
+                }
+            ),
         )
 
     async def async_step_manual(
@@ -167,6 +295,8 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SHOW_DIAGNOSTICS: DEFAULT_SHOW_DIAGNOSTICS,
                 CONF_BLOCK_START_WHILE_CHARGING: DEFAULT_BLOCK_START_WHILE_CHARGING,
                 CONF_FAST_POLL: DEFAULT_FAST_POLL,
+                CONF_WAKE_ON_COMMAND: DEFAULT_WAKE_ON_COMMAND,
+                CONF_IDLE_DISCONNECT: DEFAULT_IDLE_DISCONNECT,
             },
         )
 
@@ -199,6 +329,18 @@ class PuffcoOptionsFlow(config_entries.OptionsFlowWithConfigEntry):
                 vol.Optional(
                     CONF_FAST_POLL,
                     default=options.get(CONF_FAST_POLL, DEFAULT_FAST_POLL),
+                ): cv.boolean,
+                vol.Optional(
+                    CONF_WAKE_ON_COMMAND,
+                    default=options.get(
+                        CONF_WAKE_ON_COMMAND, DEFAULT_WAKE_ON_COMMAND
+                    ),
+                ): cv.boolean,
+                vol.Optional(
+                    CONF_IDLE_DISCONNECT,
+                    default=options.get(
+                        CONF_IDLE_DISCONNECT, DEFAULT_IDLE_DISCONNECT
+                    ),
                 ): cv.boolean,
             }
         )

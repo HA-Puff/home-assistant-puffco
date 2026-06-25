@@ -8,7 +8,7 @@ Copy the entire `custom_components/puffco/` folder:
 /config/custom_components/puffco/
 ```
 
-The BLE library is vendored at `puffco/_vendor/puffco_ble/` — no `pip install` on the HA host.
+The BLE library is vendored at `custom_components/puffco/_vendor/puffco_ble/` — no `pip install` on the HA host.
 
 **Restart Home Assistant** (Settings → System → Restart). Reload is not enough for new platforms or entity changes.
 
@@ -25,7 +25,8 @@ Entity IDs: `{domain}.peak_pro_{suffix}_{name}` (MAC-based suffix).
 
 | Entity | Purpose |
 |--------|---------|
-| `climate.*_heater` | **Primary control** — session, profile preset, target temp |
+| `climate.*_heater` | Temp + profile presets (optional dashboard card) |
+| `switch.*_heat_session` | **Best for start/stop** — on = heat, off = abort |
 | `sensor.*_battery` | Battery % (+ charge attrs on dock) |
 | `sensor.*_heater_temperature` | Live chamber temperature |
 | `sensor.*_heat_time_remaining` | Seconds left in session |
@@ -69,7 +70,7 @@ Blueprints ship in `custom_components/puffco/blueprints/`. Copy to `config/bluep
 
 ## Dashboards
 
-Example Lovelace panels: `docs/dashboard-peak-pro-pipboy.yaml`, `docs/dashboard-peak-pro-holotape.yaml` (custom cards). For a stock HA layout, use a **Climate** card + **Gauge** on heater temp.
+Example Lovelace panels: see [DASHBOARDS.md](DASHBOARDS.md). Files use a `DEVICE_SLUG` placeholder you must replace with your entity prefix.
 
 ## Troubleshooting
 
@@ -78,6 +79,10 @@ Example Lovelace panels: `docs/dashboard-peak-pro-pipboy.yaml`, `docs/dashboard-
 | Connected off after wake | Wait ~15s or press **Reconnect**; close phone app |
 | Config flow cannot connect | Pairing mode; remove Peak from Windows Bluetooth settings |
 | Lantern color snaps back | Update to latest integration (sync guard fix) |
+| Timers show Unknown while idle | Normal on older versions; 1.0.3+ shows **0** when not heating |
+| Session event shows Unknown | Normal until the first completed session; check `in_session` attribute |
+| Entities go Unknown mid-heat | Update to 1.0.4+ (Peak is busy at target temp; polls now keep last state) |
+| Climate target looks very high | HA displays °C as °F — compare to profile temp in the Puffco app (~500°F ≈ 260°C) |
 | Proxy timeouts | Use connectable ESPHome Bluetooth proxy |
 
 Debug logging:
@@ -93,4 +98,4 @@ logger:
 
 1. Replace `custom_components/puffco/` (HACS update or manual copy)
 2. Restart Home Assistant
-3. Check integration version **1.0.0** under device info
+3. Check the version in `custom_components/puffco/manifest.json` (or device/integration info in HA).

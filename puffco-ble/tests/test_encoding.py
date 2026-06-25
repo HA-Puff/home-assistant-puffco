@@ -41,6 +41,36 @@ def test_firmware_int_to_string():
     assert len(rev) >= 1
 
 
+def test_clamp_byte_rejects_inf():
+    from puffco_ble.encoding import clamp_byte
+
+    assert clamp_byte(float("inf")) == 255
+    assert clamp_byte(float("nan"), default=0) == 0
+    assert clamp_byte(300) == 255
+    assert clamp_byte(-5) == 0
+
+
+def test_safe_int_from_float_rejects_inf():
+    import struct
+
+    from puffco_ble.encoding import finite_float, safe_int_from_float, safe_int_from_float_bytes
+
+    assert safe_int_from_float(float("inf")) == 0
+    assert safe_int_from_float(float("inf"), default=7) == 7
+    inf_bytes = struct.pack("<f", float("inf"))
+    assert finite_float(inf_bytes) is None
+    assert safe_int_from_float_bytes(inf_bytes) == 0
+    assert safe_int_from_float_bytes(struct.pack("<f", 42.0)) == 42
+
+
+def test_finite_round_rejects_inf():
+    from puffco_ble.encoding import finite_round
+
+    assert finite_round(float("inf")) is None
+    assert finite_round(42.7) == 43.0
+    assert finite_round(42.4) == 42.0
+
+
 def test_parse_rgb_invalid():
     with pytest.raises(ValueError):
         parse_rgb_hex("FF")

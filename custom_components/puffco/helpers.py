@@ -7,14 +7,24 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import DOMAIN, PROFILE_COUNT
-from puffco_ble.constants import OperatingState
-from puffco_ble.encoding import operating_state_name
+from puffco_ble.constants import ChamberType, OperatingState
+from puffco_ble.encoding import chamber_type_name, operating_state_name
 
 OPERATING_STATE_OPTIONS: tuple[str, ...] = tuple(
     operating_state_name(int(state)) for state in OperatingState
 )
 
-PRESET_MODES: tuple[str, ...] = tuple(f"Profile {i}" for i in range(1, PROFILE_COUNT + 1))
+CHAMBER_TYPE_OPTIONS: tuple[str, ...] = tuple(
+    chamber_type_name(int(state)) for state in ChamberType
+)
+
+PRESET_MODES: tuple[str, ...] = tuple(
+    f"Profile {index + 1}" for index in range(PROFILE_COUNT)
+)
+
+def is_on_dock(charge_state: str | None) -> bool:
+    """True when the Peak is on the charging dock (including full)."""
+    return bool(charge_state and charge_state != "disconnected")
 
 
 def preset_mode_for_profile(profile_index: int) -> str:

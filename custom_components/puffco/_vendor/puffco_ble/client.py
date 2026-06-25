@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import sys
 from dataclasses import replace
-from typing import Awaitable, Callable, Literal
+from typing import Awaitable, Callable, Literal, TypeVar
 
 from bleak import BleakError
 from bleak.backends.device import BLEDevice
@@ -20,6 +21,7 @@ from puffco_ble.constants import (
 )
 from puffco_ble.encoding import (
     battery_charge_state_name,
+    chamber_type_name,
     is_battery_charging,
     operating_state_name,
 )
@@ -27,6 +29,111 @@ from puffco_ble.models import PuffcoData
 from puffco_ble.protocol import find_device_by_address
 
 _LOGGER = logging.getLogger(__name__)
+
+_HEAT_CYCLE_STATE_NAMES = frozenset(
+    {
+        "heat_cycle_preheat",
+        "heat_cycle_active",
+        "heat_cycle_fade",
+    }
+)
+
+
+_T = TypeVar("_T")
+
+
+async def _read_or(coro: Awaitable[_T], fallback: _T) -> _T:
+    """Return fallback when a fast poll read fails (common during active heat)."""
+    try:
+        return await coro
+    except Exception:
+        return fallback
+
+
+def _session_still_active(data: PuffcoData) -> bool:
+    """True while timer data shows the heat session has meaningful time left."""
+    if data.operating_state not in _HEAT_CYCLE_STATE_NAMES:
+        return False
+    if data.state_total_s is None or data.state_elapsed_s is None:
+        return False
+    if not math.isfinite(data.state_total_s) or not math.isfinite(data.state_elapsed_s):
+        return False
+    return (data.state_total_s - data.state_elapsed_s) > 3.0
+
+
+def _heat_seconds_remaining_estimate(data: PuffcoData) -> float:
+    if (
+        data.state_total_s is None
+        or data.state_elapsed_s is None
+        or not math.isfinite(data.state_total_s)
+        or not math.isfinite(data.state_elapsed_s)
+    ):
+        return 0.0
+    remaining = max(0.0, data.state_total_s - data.state_elapsed_s)
+    return remaining if math.isfinite(remaining) else 0.0
+
+
+async def _fetch_slow_fields(client: PuffcoBleakClient) -> dict:
+    """Read infrequently-changing profile and diagnostic fields."""
+    profile_names: list[str] = []
+    profile_colors_rgb: list[tuple[int, int, int]] = []
+    profile_boost_temps_c: list[float] = []
+    profile_boost_times_s: list[float] = []
+    for idx in range(4):
+        profile_names.append(await client.get_profile_name(idx))
+        profile_colors_rgb.append(await client.get_profile_color(idx))
+        profile_boost_temps_c.append(await client.get_boost_temp(idx))
+        profile_boost_times_s.append(await client.get_boost_time(idx))
+    led = await client.get_led_brightness_segments()
+
+    async def _slow(name: str, coro: Awaitable[_T], default: _T) -> _T:
+        try:
+            return await coro
+        except Exception as err:
+            _LOGGER.debug("Slow field %s read failed: %s", name, err)
+            return default
+
+    chamber_type = "unknown"
+    approx_dabs_remaining: int | None = None
+    device_birthday = ""
+    uptime_seconds: float | None = None
+    total_heat_cycle_time_s: float | None = None
+    serial_number = ""
+
+    chamber_type = chamber_type_name(
+        await _slow("chamber_type", client.get_chamber_type(), 0)
+    )
+    approx_dabs_remaining = await _slow(
+        "approx_dabs_remaining", client.get_approx_dabs_remaining(), None
+    )
+    device_birthday = await _slow(
+        "device_birthday", client.get_device_birthday(), ""
+    )
+    uptime_seconds = await _slow(
+        "uptime_seconds", client.get_uptime_seconds(), None
+    )
+    total_heat_cycle_time_s = await _slow(
+        "total_heat_cycle_time", client.get_total_heat_cycle_time(), None
+    )
+    serial_number = await _slow(
+        "serial_number", client.get_serial_number(), ""
+    )
+
+    return {
+        "profile_names": profile_names,
+        "profile_colors_rgb": profile_colors_rgb,
+        "profile_boost_temps_c": profile_boost_temps_c,
+        "profile_boost_times_s": profile_boost_times_s,
+        "lantern_brightness": max(led),
+        "led_brightness": led,
+        "chamber_type": chamber_type,
+        "approx_dabs_remaining": approx_dabs_remaining,
+        "device_birthday": device_birthday,
+        "uptime_seconds": uptime_seconds,
+        "total_heat_cycle_time_s": total_heat_cycle_time_s,
+        "serial_number": serial_number,
+    }
+
 
 DEFAULT_SCAN_TIMEOUT = 15.0
 DEFAULT_CONNECT_TIMEOUT = 60.0
@@ -93,6 +200,8 @@ class PuffcoClient:
     def reset_bond_state(self) -> None:
         """Clear session bond flag so the next connect may pair() again."""
         self._bonded = False
+        if self._client is not None:
+            self._client.reset_pairing_cache()
 
     @property
     def is_connected(self) -> bool:
@@ -252,19 +361,60 @@ class PuffcoClient:
                 f"GATT session did not stay connected to {self.address}"
             )
         self._connected_once = True
-        try:
-            await self._finalize_connection()
-        except Exception as first_err:
-            # Reuse an existing OS/proxy bond first (normal after HA restart or
-            # wake from sleep). Only call pair() if the Lorax handshake fails.
-            _LOGGER.debug(
-                "Handshake failed for %s without bond step (%s); trying pair()",
-                self.address,
-                first_err,
+        last_err: Exception | None = None
+        for heal in ("none", "bond", "unpair"):
+            try:
+                if heal == "bond":
+                    await self._bond_if_needed(force=True)
+                elif heal == "unpair":
+                    await self._heal_stale_bond()
+                await self._finalize_connection()
+                self._bonded = True
+                if heal == "unpair":
+                    _LOGGER.info(
+                        "Reconnected to %s after clearing stale OS bond",
+                        self.address,
+                    )
+                return
+            except Exception as err:
+                last_err = err
+                _LOGGER.warning(
+                    "Handshake for %s failed (heal=%s): %s",
+                    self.address,
+                    heal,
+                    err,
+                )
+        assert last_err is not None
+        raise last_err
+
+    async def _heal_stale_bond(self) -> None:
+        """Remove a stale OS bond and open a fresh GATT session."""
+        _LOGGER.warning("Clearing stale OS bond for %s", self.address)
+        self._bonded = False
+        device = self._ble_device
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                await self._reset_os_bond(self._client)
+            self._client.reset_pairing_cache()
+            with contextlib.suppress(Exception):
+                await self._client.disconnect()
+        self._client = None
+        if device is None:
+            raise BleakError(f"No BLE device object for bond heal ({self.address})")
+        if self._connector is not None:
+            self._client = await self._connector(device, self._on_disconnect)
+        else:
+            self._client = PuffcoBleakClient(
+                device,
+                disconnected_callback=self._on_disconnect,
+                timeout=self.connect_timeout,
             )
-            await self._bond_if_needed(force=True)
-            await self._finalize_connection()
-        self._bonded = True
+            await self._client.connect(timeout=self.connect_timeout)
+        if not self._client.is_connected:
+            raise BleakError(
+                f"GATT session did not reconnect after bond heal ({self.address})"
+            )
+        self._connected_once = True
 
     async def _bond_if_needed(self, *, force: bool = False) -> None:
         """Establish an OS-level bond (BlueZ/ESP32) before touching Lorax chars.
@@ -371,6 +521,12 @@ class PuffcoClient:
         if not self.is_connected:
             await self.connect()
 
+    async def read_battery_charge(self) -> tuple[bool, str, float | None]:
+        """Read battery charge state from the device (fresh dock/charging status)."""
+        async with self._lock:
+            await self.ensure_connected()
+            return await self._read_battery_charge(self.bleak)
+
     async def _read_battery_charge(
         self, client: PuffcoBleakClient
     ) -> tuple[bool, str, float | None]:
@@ -417,6 +573,8 @@ class PuffcoClient:
                 state_elapsed_s = await client.get_state_elapsed_time()
                 state_total_s = await client.get_state_total_time()
 
+            slow = await _fetch_slow_fields(client)
+
             return PuffcoData(
                 total_dabs=await client.get_total_dab_count(),
                 trip_dabs=await client.get_trip_dab_count(),
@@ -439,6 +597,7 @@ class PuffcoClient:
                 battery_charging=charging,
                 battery_charge_state=charge_state,
                 charge_eta_seconds=charge_eta,
+                **slow,
             )
 
     async def fetch_data_fast(
@@ -454,39 +613,101 @@ class PuffcoClient:
         async with self._lock:
             await self.ensure_connected()
             client = self.bleak
-            profile = await client.get_profile()
+            profile = await _read_or(client.get_profile(), base.active_profile)
             profile_temps = list(base.profile_temps_c)
             profile_times = list(base.profile_times_s)
             if profile_index is not None:
-                profile_temps[profile_index] = await client.get_profile_temp(
-                    profile_index
+                profile_temps[profile_index] = await _read_or(
+                    client.get_profile_temp(profile_index),
+                    profile_temps[profile_index],
                 )
-                profile_times[profile_index] = await client.get_profile_time(
-                    profile_index
+                profile_times[profile_index] = await _read_or(
+                    client.get_profile_time(profile_index),
+                    profile_times[profile_index],
+                )
+            profile_names = list(base.profile_names or [""] * 4)
+            profile_colors_rgb = list(
+                base.profile_colors_rgb or [(0, 0, 0)] * 4
+            )
+            profile_boost_temps_c = list(
+                base.profile_boost_temps_c or [0.0] * 4
+            )
+            profile_boost_times_s = list(
+                base.profile_boost_times_s or [0.0] * 4
+            )
+            if profile_index is not None:
+                idx = profile_index
+                profile_names[idx] = await _read_or(
+                    client.get_profile_name(idx), profile_names[idx]
+                )
+                profile_colors_rgb[idx] = await _read_or(
+                    client.get_profile_color(idx), profile_colors_rgb[idx]
+                )
+                profile_boost_temps_c[idx] = await _read_or(
+                    client.get_boost_temp(idx), profile_boost_temps_c[idx]
+                )
+                profile_boost_times_s[idx] = await _read_or(
+                    client.get_boost_time(idx), profile_boost_times_s[idx]
                 )
             lantern_on = (
                 bool(client.lantern_enabled)
                 if client.lantern_enabled is not None
                 else base.lantern_on
             )
-            charging, charge_state, charge_eta = await self._read_battery_charge(
-                client
-            )
-            state_id = await client.get_operating_state()
+            try:
+                charging, charge_state, charge_eta = await self._read_battery_charge(
+                    client
+                )
+            except Exception:
+                charging = base.battery_charging
+                charge_state = base.battery_charge_state
+                charge_eta = base.charge_eta_seconds
+
             from puffco_ble.constants import is_heat_cycle_state_id
+
+            state_id = await _read_or(client.get_operating_state(), None)
+            if state_id is not None and is_heat_cycle_state_id(state_id):
+                operating_state = operating_state_name(state_id)
+                in_heat = True
+            elif state_id is not None:
+                # Trust explicit idle/sleep from the device unless timers prove
+                # we are still mid-session (guards brief BLE glitches only).
+                if (
+                    not is_heat_cycle_state_id(state_id)
+                    and _session_still_active(base)
+                    and _heat_seconds_remaining_estimate(base) > 3.0
+                ):
+                    operating_state = base.operating_state
+                    in_heat = True
+                else:
+                    operating_state = operating_state_name(state_id)
+                    in_heat = is_heat_cycle_state_id(state_id)
+            elif _session_still_active(base):
+                operating_state = base.operating_state
+                in_heat = True
+            else:
+                operating_state = base.operating_state
+                in_heat = operating_state in _HEAT_CYCLE_STATE_NAMES
 
             state_elapsed_s = base.state_elapsed_s
             state_total_s = base.state_total_s
-            if is_heat_cycle_state_id(state_id):
-                state_elapsed_s = await client.get_state_elapsed_time()
-                state_total_s = await client.get_state_total_time()
-            else:
-                state_elapsed_s = None
-                state_total_s = None
+            if in_heat:
+                state_elapsed_s = await _read_or(
+                    client.get_state_elapsed_time(), base.state_elapsed_s
+                )
+                state_total_s = await _read_or(
+                    client.get_state_total_time(), base.state_total_s
+                )
+
+            heater_temp_c = await _read_or(
+                client.get_heater_temp_c(), base.heater_temp_c
+            )
+            if heater_temp_c is None:
+                heater_temp_c = base.heater_temp_c
 
             return replace(
                 base,
-                heater_temp_c=await client.get_heater_temp_c(),
+                heater_temp_c=heater_temp_c,
                 profile_temps_c=profile_temps,
                 profile_times_s=profile_times,
                 profile_temp_c=(
@@ -495,16 +716,32 @@ class PuffcoClient:
                     else base.profile_temp_c
                 ),
                 active_profile=profile,
-                operating_state=operating_state_name(state_id),
+                operating_state=operating_state,
                 state_elapsed_s=state_elapsed_s,
                 state_total_s=state_total_s,
-                battery_percent=await client.get_battery_percentage(),
+                battery_percent=await _read_or(
+                    client.get_battery_percentage(), base.battery_percent
+                ),
                 lantern_on=lantern_on,
-                stealth_mode=await client.get_stealth_mode(),
+                stealth_mode=await _read_or(
+                    client.get_stealth_mode(),
+                    client.stealth_mode
+                    if client.stealth_mode is not None
+                    else base.stealth_mode,
+                ),
                 battery_charging=charging,
                 battery_charge_state=charge_state,
                 charge_eta_seconds=charge_eta,
+                profile_names=profile_names,
+                profile_colors_rgb=profile_colors_rgb,
+                profile_boost_temps_c=profile_boost_temps_c,
+                profile_boost_times_s=profile_boost_times_s,
             )
+
+    async def boost_session(self) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.boost_heat_cycle()
 
     async def set_profile_temperature(self, profile: int, celsius: float) -> None:
         async with self._lock:
@@ -515,6 +752,38 @@ class PuffcoClient:
         async with self._lock:
             await self.ensure_connected()
             await self.bleak.set_profile_time(seconds, profile)
+
+    async def set_boost_temperature(self, profile: int, celsius: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_boost_temp(celsius, profile)
+
+    async def set_boost_time(self, profile: int, seconds: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_boost_time(seconds, profile)
+
+    async def set_profile_name(self, profile: int, name: str) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_profile_name(profile, name)
+
+    async def set_profile_color(self, profile: int, r: int, g: int, b: int) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_profile_color(profile, r, g, b)
+
+    async def set_lantern_brightness(self, value: int) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.send_lantern_brightness(value)
+
+    async def set_led_brightness(
+        self, ring: int, glass: int, main: int, battery: int
+    ) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_led_brightness_segments(ring, glass, main, battery)
 
     async def start_session(self) -> None:
         async with self._lock:
@@ -543,11 +812,17 @@ class PuffcoClient:
     ) -> None:
         """Apply lantern color, effect, brightness, and on/off."""
         from puffco_ble.constants import LANTERN_TIME_SEC
-        from puffco_ble.encoding import pack_static_lantern_color
+        from puffco_ble.constants import LanternMode
+        from puffco_ble.encoding import clamp_brightness, clamp_byte, pack_static_lantern_color
         from puffco_ble.lantern_effects import (
             DEFAULT_LANTERN_EFFECT,
             LANTERN_EFFECT_BY_NAME,
         )
+
+        r = clamp_byte(r)
+        g = clamp_byte(g)
+        b = clamp_byte(b)
+        brightness = clamp_brightness(brightness)
 
         effect = LANTERN_EFFECT_BY_NAME.get(effect_name)
         if effect is None:
@@ -567,10 +842,11 @@ class PuffcoClient:
                 if bleak.lantern_color != preset:
                     await bleak.send_lantern_color_bytes(preset)
             else:
-                mode = effect.mode if effect.mode is not None else 1
-                payload = bytearray(pack_static_lantern_color(r, g, b, mode=int(mode)))
+                mode = effect.mode if effect.mode is not None else LanternMode.STATIC
+                mode_byte = clamp_byte(int(mode), default=int(LanternMode.STATIC))
+                payload = bytearray(pack_static_lantern_color(r, g, b, mode=mode_byte))
                 if bleak.lantern_color != payload:
-                    await bleak.send_lantern_color(r, g, b, mode=int(mode))
+                    await bleak.send_lantern_color(r, g, b, mode=mode_byte)
 
             if enabled:
                 if not already_on:

@@ -1,6 +1,8 @@
-"""Climate platform — native heater/session control for the Peak."""
+"""Climate platform — optional heater UI (profile + temp). Prefer switch/buttons for on/off."""
 
 from __future__ import annotations
+
+import math
 
 from homeassistant.components.climate import (
     ClimateEntity,
@@ -15,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, TEMPERATURE_CEILING_C, TEMPERATURE_FLOOR_C, is_heat_cycle_state
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoEntity
+from .entity import PuffcoEntity, PuffcoSessionControllableEntity
 from .helpers import (
     PRESET_MODES,
     preset_mode_for_profile,
@@ -32,8 +34,12 @@ async def async_setup_entry(
     async_add_entities([PuffcoHeaterClimate(coordinator)])
 
 
-class PuffcoHeaterClimate(PuffcoEntity, ClimateEntity):
-    """Peak Pro chamber as a standard HA climate/heater entity."""
+class PuffcoClimateBase(PuffcoEntity, ClimateEntity):
+    """Climate entities with coordinator device info."""
+
+
+class PuffcoHeaterClimate(PuffcoSessionControllableEntity, PuffcoClimateBase):
+    """Peak chamber heater — good for temp/profile; use switch.*_heat_session for on/off."""
 
     _attr_translation_key = "heater"
     _attr_icon = "mdi:fire"
@@ -58,20 +64,24 @@ class PuffcoHeaterClimate(PuffcoEntity, ClimateEntity):
     @property
     def current_temperature(self) -> float | None:
         if self.coordinator.data:
-            return self.coordinator.data.heater_temp_c
+            temp = self.coordinator.data.heater_temp_c
+            if temp is not None and math.isfinite(temp):
+                return temp
+            profile_temp = self.coordinator.data.profile_temp_c
+            if math.isfinite(profile_temp):
+                return profile_temp
         return None
 
     @property
     def target_temperature(self) -> float | None:
         if self.coordinator.data:
-            return self.coordinator.data.profile_temp_c
+            temp = self.coordinator.data.profile_temp_c
+            return temp if math.isfinite(temp) else None
         return None
 
     @property
     def hvac_mode(self) -> HVACMode:
-        if self.coordinator.data and is_heat_cycle_state(
-            self.coordinator.data.operating_state
-        ):
+        if self.coordinator.in_heat_session:
             return HVACMode.HEAT
         return HVACMode.OFF
 
@@ -88,6 +98,8 @@ class PuffcoHeaterClimate(PuffcoEntity, ClimateEntity):
             return HVACAction.COOLING
         if is_heat_cycle_state(state):
             return HVACAction.HEATING
+        if self.coordinator.session_timer_active:
+            return HVACAction.HEATING
         return HVACAction.IDLE
 
     @property
@@ -99,11 +111,13 @@ class PuffcoHeaterClimate(PuffcoEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if hvac_mode == HVACMode.HEAT:
             await self.async_turn_on()
-        elif hvac_mode == HVACMode.OFF:
+        elif hvac_mode in (HVACMode.OFF, HVACMode.HEAT_COOL):
             await self.async_turn_off()
 
     async def async_set_temperature(self, **kwargs) -> None:
         if (temp := kwargs.get(ATTR_TEMPERATURE)) is None or self.coordinator.data is None:
+            return
+        if not math.isfinite(float(temp)):
             return
         profile = self.coordinator.data.active_profile
 
@@ -120,10 +134,9 @@ class PuffcoHeaterClimate(PuffcoEntity, ClimateEntity):
         await self.coordinator.async_set_profile(profile + 1)
 
     async def async_turn_on(self, **kwargs) -> None:
+        if self.coordinator.in_heat_session:
+            return
         await self.coordinator.async_start_session()
 
     async def async_turn_off(self, **kwargs) -> None:
-        if self.coordinator.data and is_heat_cycle_state(
-            self.coordinator.data.operating_state
-        ):
-            await self.coordinator.async_abort_session()
+        await self.coordinator.async_abort_session()

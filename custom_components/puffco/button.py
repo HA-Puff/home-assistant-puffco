@@ -11,9 +11,13 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoEntity
+from .entity import PuffcoEntity, PuffcoSessionControllableEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class PuffcoButtonBase(PuffcoEntity, ButtonEntity):
+    """Buttons register with coordinator device info."""
 
 
 async def async_setup_entry(
@@ -27,12 +31,9 @@ async def async_setup_entry(
             PuffcoReconnectButton(coordinator),
             PuffcoStartSessionButton(coordinator),
             PuffcoAbortSessionButton(coordinator),
+            PuffcoBoostSessionButton(coordinator),
         ]
     )
-
-
-class PuffcoButtonBase(PuffcoEntity, ButtonEntity):
-    """Base for Puffco buttons."""
 
 
 class PuffcoReconnectButton(PuffcoButtonBase):
@@ -59,7 +60,11 @@ class PuffcoReconnectButton(PuffcoButtonBase):
             await self.coordinator.async_reconnect(clear_bond=True)
 
 
-class PuffcoStartSessionButton(PuffcoButtonBase):
+class PuffcoSessionButtonBase(PuffcoSessionControllableEntity, PuffcoButtonBase):
+    """Session buttons with correct coordinator + button MRO."""
+
+
+class PuffcoStartSessionButton(PuffcoSessionButtonBase):
     _attr_translation_key = "start_session"
     _attr_icon = "mdi:fire"
 
@@ -71,7 +76,7 @@ class PuffcoStartSessionButton(PuffcoButtonBase):
         await self.coordinator.async_start_session()
 
 
-class PuffcoAbortSessionButton(PuffcoButtonBase):
+class PuffcoAbortSessionButton(PuffcoSessionButtonBase):
     _attr_translation_key = "abort_session"
     _attr_icon = "mdi:stop"
 
@@ -81,3 +86,19 @@ class PuffcoAbortSessionButton(PuffcoButtonBase):
 
     async def async_press(self) -> None:
         await self.coordinator.async_abort_session()
+
+
+class PuffcoBoostSessionButton(PuffcoSessionButtonBase):
+    _attr_translation_key = "boost_session"
+    _attr_icon = "mdi:rocket-launch"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_boost_session"
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.in_heat_session
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_boost_session()

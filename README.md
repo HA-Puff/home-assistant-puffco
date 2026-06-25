@@ -45,7 +45,8 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for entity reference and troubleshooting.
 
 After setup, use these first:
 
-- `climate.*_heater` — start/stop sessions, profile preset, target temperature
+- `switch.*_heat_session` — **start/stop** a dab session (recommended)
+- `climate.*_heater` — profile preset + target temp (optional; use switch for on/off)
 - `sensor.*_battery` / `*_heater_temperature` / `*_heat_cycle_timer`
 - `number.*_profile_N_temperature` / `*_profile_N_duration`
 - `light.*_lantern`
@@ -65,10 +66,14 @@ pytest
 puffco-cli scan
 ```
 
-Sync library → integration after BLE changes:
+Sync library → integration after BLE changes (copies into `_vendor/`, excludes CLI):
 
 ```powershell
 .\scripts\sync_ha_lib.ps1
+```
+
+```bash
+./scripts/sync_ha_lib.sh
 ```
 
 ## Publishing / releases

@@ -18,8 +18,104 @@ def parse_float(data: bytes | bytearray) -> float:
     return struct.unpack("<f", bytes(data[:4]))[0]
 
 
+def finite_float(data: bytes | bytearray | None) -> float | None:
+    """Parse float32; None when missing, nan, or inf."""
+    if not data or len(data) < 4:
+        return None
+    raw = parse_float(data)
+    if not math.isfinite(raw):
+        return None
+    return raw
+
+
+def safe_int_from_float(value: float, *, default: int = 0) -> int:
+    """int() that survives nan/inf from bad BLE reads or HA payloads."""
+    if not math.isfinite(value):
+        return default
+    return int(value)
+
+
+def safe_int_from_float_bytes(data: bytes | bytearray | None, *, default: int = 0) -> int:
+    parsed = finite_float(data) if data is not None else None
+    if parsed is None:
+        return default
+    return safe_int_from_float(parsed, default=default)
+
+
 def parse_uint32(data: bytes | bytearray) -> int:
     return struct.unpack("<I", bytes(data[:4]))[0]
+
+
+def finite_round(value: float | None, ndigits: int = 0) -> float | None:
+    """round() that returns None for nan/inf instead of propagating bad BLE data."""
+    if value is None or not math.isfinite(value):
+        return None
+    return round(value, ndigits)
+
+
+def clamp_byte(value: object, *, default: int = 255) -> int:
+    """Coerce a color/brightness channel to 0–255 (guards inf/nan from HA)."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(0, min(255, int(number)))
+
+
+def clamp_brightness(value: object | None, *, default: int = 255) -> int | None:
+    if value is None:
+        return None
+    return clamp_byte(value, default=default)
+
+
+def parse_lorax_short_number(
+    data: bytes | bytearray | str | None,
+    *,
+    max_reasonable: float | None = None,
+) -> float | None:
+    """Parse a Lorax READ_SHORT payload (ASCII decimal, uint32, or float32)."""
+    if data is None:
+        return None
+    if isinstance(data, str):
+        text = data.strip()
+        if not text:
+            return None
+        try:
+            value = float(text)
+        except ValueError:
+            return None
+    else:
+        raw = bytes(data)
+        if not raw:
+            return None
+        text = raw.decode("utf-8", errors="ignore").strip("\x00").strip()
+        if text and text.replace(".", "", 1).replace("-", "", 1).isdigit():
+            try:
+                value = float(text)
+            except ValueError:
+                value = None
+        else:
+            value = None
+        if value is None and len(raw) >= 4:
+            as_u32 = float(parse_uint32(raw))
+            as_f = parse_float(raw)
+            if math.isnan(as_f):
+                value = as_u32
+            elif as_u32 > 10_000_000 and 0 <= as_f <= (max_reasonable or 1_000_000_000):
+                value = as_f
+            elif 0 <= as_u32 <= (max_reasonable or 1_000_000_000):
+                value = as_u32
+            else:
+                value = as_f if not math.isnan(as_f) else as_u32
+        elif value is None:
+            value = float(int.from_bytes(raw, "little"))
+    if max_reasonable is not None and (value < 0 or value > max_reasonable):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
 
 
 def pack_float(value: float) -> bytes:
@@ -38,7 +134,19 @@ def pack_lorax_mode_command(command: DeviceCommands | int) -> bytes:
 def pack_static_lantern_color(
     r: int, g: int, b: int, mode: LanternMode = LanternMode.STATIC
 ) -> bytearray:
-    return bytearray([r & 0xFF, g & 0xFF, b & 0xFF, 0, int(mode), 0, 0, 0])
+    mode_byte = clamp_byte(int(mode), default=int(LanternMode.STATIC))
+    return bytearray(
+        [
+            clamp_byte(r),
+            clamp_byte(g),
+            clamp_byte(b),
+            0,
+            mode_byte,
+            0,
+            0,
+            0,
+        ]
+    )
 
 
 def pack_lantern_on(enabled: bool, lorax: bool = False) -> bytearray:
@@ -110,3 +218,24 @@ def is_battery_charging(state_id: int) -> bool:
     from puffco_ble.constants import BatteryChargeState
 
     return state_id in (BatteryChargeState.BULK, BatteryChargeState.TOPUP)
+
+
+def is_battery_on_dock(state_id: int) -> bool:
+    from puffco_ble.constants import BatteryChargeState
+
+    return state_id != BatteryChargeState.DISCONNECTED
+
+
+def chamber_type_name(type_id: int) -> str:
+    from puffco_ble.constants import ChamberType
+
+    try:
+        return ChamberType(type_id).name.lower()
+    except ValueError:
+        return f"unknown_{type_id}"
+
+
+def parse_profile_color(data: bytes | bytearray) -> tuple[int, int, int]:
+    if not data or len(data) < 3:
+        return (0, 0, 0)
+    return int(data[0]), int(data[1]), int(data[2])

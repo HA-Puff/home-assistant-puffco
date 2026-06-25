@@ -13,12 +13,14 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import color as color_util
 
-from .const import DOMAIN, LANTERN_SYNC_GUARD, LANTERN_WRITE_DEBOUNCE
+from .const import DOMAIN, LANTERN_SYNC_GUARD, LANTERN_WRITE_DEBOUNCE, PROFILE_COUNT
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoEntity
+from .entity import PuffcoControllableEntity, PuffcoPersistentStateEntity
+from puffco_ble.encoding import clamp_brightness, clamp_byte
 from puffco_ble.lantern_effects import (
     DEFAULT_LANTERN_EFFECT,
     LANTERN_EFFECT_BY_NAME,
@@ -36,10 +38,15 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: PuffcoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([PuffcoLanternLight(coordinator)])
+    entities: list[LightEntity] = [PuffcoLanternLight(coordinator)]
+    entities.extend(
+        PuffcoProfileColorLight(coordinator, profile)
+        for profile in range(PROFILE_COUNT)
+    )
+    async_add_entities(entities)
 
 
-class PuffcoLanternLight(PuffcoEntity, LightEntity):
+class PuffcoLanternLight(PuffcoControllableEntity, LightEntity):
     """Logo / lantern light with RGB color wheel, brightness, and effects."""
 
     _attr_translation_key = "lantern"
@@ -95,28 +102,46 @@ class PuffcoLanternLight(PuffcoEntity, LightEntity):
                 break
         return ((raw[0], raw[1], raw[2]), effect_name)
 
+    @staticmethod
+    def _clamp_rgb(rgb: tuple) -> tuple[int, int, int]:
+        return (clamp_byte(rgb[0]), clamp_byte(rgb[1]), clamp_byte(rgb[2]))
+
     def _apply_turn_on_kwargs(self, kwargs: dict) -> None:
         if (rgb := kwargs.get("rgb_color")) is not None:
-            self._rgb = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+            self._rgb = self._clamp_rgb(rgb)
         elif (rgbw := kwargs.get("rgbw_color")) is not None:
-            self._rgb = color_util.rgbw_to_rgb(*rgbw)
+            self._rgb = self._clamp_rgb(color_util.rgbw_to_rgb(*rgbw))
         elif (hs := kwargs.get("hs_color")) is not None:
-            self._rgb = color_util.color_hs_to_RGB(hs[0], hs[1])
+            self._rgb = self._clamp_rgb(
+                color_util.color_hs_to_RGB(hs[0], hs[1])
+            )
+        elif (xy := kwargs.get("xy_color")) is not None:
+            self._rgb = self._clamp_rgb(
+                color_util.color_xy_to_RGB(xy[0], xy[1])
+            )
 
         if (effect := kwargs.get("effect")) is not None:
             self._effect = effect
 
         if (brightness := kwargs.get("brightness")) is not None:
-            self._attr_brightness = int(brightness)
+            clamped = clamp_brightness(brightness)
+            if clamped is not None:
+                self._attr_brightness = clamped
 
     async def _commit_lantern(self) -> None:
+        effect = LANTERN_EFFECT_BY_NAME.get(self._effect)
+        uses_color = effect is None or effect.uses_color
+        r, g, b = self._rgb
+        if not uses_color:
+            r, g, b = 255, 255, 255
+
         async def _write(client):
             await client.set_lantern(
-                r=self._rgb[0],
-                g=self._rgb[1],
-                b=self._rgb[2],
+                r=clamp_byte(r),
+                g=clamp_byte(g),
+                b=clamp_byte(b),
                 effect_name=self._effect,
-                brightness=self.brightness,
+                brightness=clamp_brightness(self.brightness),
                 enabled=True,
             )
 
@@ -144,6 +169,10 @@ class PuffcoLanternLight(PuffcoEntity, LightEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         if not self._lantern_state_is_local():
+            if self.coordinator.data:
+                clamped = clamp_brightness(self.coordinator.data.lantern_brightness)
+                if clamped is not None:
+                    self._attr_brightness = clamped
             client = (
                 self.coordinator._client.bleak  # noqa: SLF001
                 if self.coordinator._client
@@ -184,3 +213,54 @@ class PuffcoLanternLight(PuffcoEntity, LightEntity):
             lambda client: client.set_lantern_enabled(False),
             refresh=False,
         )
+
+
+class PuffcoProfileColorLight(PuffcoPersistentStateEntity, LightEntity):
+    """Profile accent color — visible on Controls; writes require an awake Peak."""
+
+    _attr_translation_key = "profile_color"
+    _attr_supported_color_modes = {ColorMode.RGB}
+    _attr_color_mode = ColorMode.RGB
+    _attr_icon = "mdi:palette"
+
+    def __init__(
+        self, coordinator: PuffcoDataUpdateCoordinator, profile_index: int
+    ) -> None:
+        super().__init__(coordinator)
+        self._profile_index = profile_index
+        self._attr_unique_id = (
+            f"{coordinator.mac}_profile_{profile_index + 1}_color"
+        )
+        self._attr_translation_placeholders = {
+            "profile": str(profile_index + 1)
+        }
+
+    @property
+    def is_on(self) -> bool:
+        return self.rgb_color is not None
+
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        data = self.coordinator.data
+        if (
+            data
+            and data.profile_colors_rgb
+            and len(data.profile_colors_rgb) > self._profile_index
+        ):
+            return data.profile_colors_rgb[self._profile_index]
+        return None
+
+    async def async_turn_on(self, **kwargs) -> None:
+        if not self.coordinator.commands_reachable:
+            raise HomeAssistantError(
+                "Peak is asleep or out of range — wake it first."
+            )
+        rgb = kwargs.get("rgb_color") or self.rgb_color or (255, 255, 255)
+        profile = self._profile_index
+
+        async def _write(client):
+            await client.set_profile_color(
+                profile, clamp_byte(rgb[0]), clamp_byte(rgb[1]), clamp_byte(rgb[2])
+            )
+
+        await self.coordinator.async_write(_write, profile_index=profile)

@@ -12,7 +12,7 @@ from homeassistant.helpers.typing import ConfigType, TemplateVarsType
 from .const import DOMAIN
 from .helpers import get_coordinator_for_device
 
-ACTION_TYPES = {"start_session", "abort_session", "reconnect", "set_profile"}
+ACTION_TYPES = {"start_session", "abort_session", "boost_session", "reconnect", "set_profile"}
 
 ACTION_SCHEMA = cv.DEVICE_ACTION_BASE_SCHEMA.extend(
     {
@@ -40,6 +40,11 @@ async def async_get_actions(
         {
             CONF_DOMAIN: DOMAIN,
             CONF_TYPE: "abort_session",
+            CONF_DEVICE_ID: device_id,
+        },
+        {
+            CONF_DOMAIN: DOMAIN,
+            CONF_TYPE: "boost_session",
             CONF_DEVICE_ID: device_id,
         },
         {
@@ -74,6 +79,8 @@ async def async_call_action_from_config(
         await coordinator.async_start_session(config.get("profile"))
     elif action_type == "abort_session":
         await coordinator.async_abort_session()
+    elif action_type == "boost_session":
+        await coordinator.async_boost_session()
     elif action_type == "reconnect":
         await coordinator.async_reconnect(clear_bond=config.get("clear_bond", False))
     elif action_type == "set_profile" and "profile" in config:

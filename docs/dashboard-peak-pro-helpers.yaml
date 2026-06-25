@@ -1,0 +1,10 @@
+# One-time setup: Settings → Devices & services → Helpers → Create helper
+# Type: Dropdown · Name: Peak Pro profile view · Entity ID: peak_pro_profile_view
+# Options (one per line): Profile 1, Profile 2, Profile 3, Profile 4
+#
+# Or add to configuration.yaml:
+# input_select:
+#   peak_pro_profile_view:
+#     name: Peak Pro profile view
+#     options: ["Profile 1", "Profile 2", "Profile 3", "Profile 4"]
+#     initial: "Profile 1"

@@ -16,6 +16,8 @@ SERVICE_ABORT_SESSION = "abort_session"
 SERVICE_SET_PROFILE = "set_profile"
 SERVICE_RECONNECT = "reconnect"
 
+SERVICE_BOOST_SESSION = "boost_session"
+
 SERVICE_START_SESSION_SCHEMA = cv.make_entity_service_schema(
     {vol.Optional("profile"): vol.All(vol.Coerce(int), vol.Range(min=1, max=4))}
 )
@@ -48,6 +50,11 @@ async def async_abort_session(call: ServiceCall) -> None:
     await coordinator.async_abort_session()
 
 
+async def async_boost_session(call: ServiceCall) -> None:
+    coordinator = await _async_get_coordinator(call)
+    await coordinator.async_boost_session()
+
+
 async def async_set_profile(call: ServiceCall) -> None:
     coordinator = await _async_get_coordinator(call)
     await coordinator.async_set_profile(call.data["profile"])
@@ -76,6 +83,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_ABORT_SESSION,
         async_abort_session,
+        schema=cv.make_entity_service_schema({}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_BOOST_SESSION,
+        async_boost_session,
         schema=cv.make_entity_service_schema({}),
     )
     hass.services.async_register(

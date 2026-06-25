@@ -48,6 +48,10 @@ from puffco_ble.encoding import (
     pack_lorax_mode_command,
     pack_mode_command,
     parse_float,
+    finite_float,
+    safe_int_from_float,
+    safe_int_from_float_bytes,
+    parse_lorax_short_number,
     parse_uint32,
 )
 
@@ -69,11 +73,20 @@ class PuffcoBleakClient(BleakClient):
         self.max_cmds = 0
         self.lantern_enabled: bool | None = None
         self.lantern_color: bytearray | None = None
+        self.stealth_mode: bool | None = None
         self.device_name = ""
         self.firmware_revision = ""
         self._lorax_reply_indicate = False
         self._lorax_notifications_active = False
         self._already_paired = False
+
+    def reset_pairing_cache(self) -> None:
+        """Forget in-session Lorax pairing state (after bond heal / disconnect)."""
+        self._already_paired = False
+        self.use_lorax_protocol = False
+        self._lorax_notifications_active = False
+        self.transactions.clear()
+        self.transaction_responses.clear()
 
     # --- GATT routing ---
 
@@ -679,13 +692,15 @@ class PuffcoBleakClient(BleakClient):
         return raw.decode().strip("\x00")
 
     async def get_battery_percentage(self) -> int:
-        return int(parse_float(await self.read_gatt_char(Characteristics.BATTERY_SOC)))
+        return safe_int_from_float_bytes(
+            await self.read_gatt_char(Characteristics.BATTERY_SOC)
+        )
 
     async def get_battery_charge_state(self) -> int:
         data = await self.read_gatt_char(Characteristics.BATTERY_CHARGE_STATE)
         if self.use_lorax_protocol:
-            return int.from_bytes(data, "little")
-        return int(parse_float(data))
+            return int.from_bytes(data, "little") if data else 0
+        return safe_int_from_float_bytes(data)
 
     async def get_battery_charge_eta_seconds(
         self, state_id: int | None = None
@@ -696,49 +711,52 @@ class PuffcoBleakClient(BleakClient):
 
         if not is_battery_charging(state_id):
             return None
-        raw = parse_float(
+        raw = finite_float(
             await self.read_gatt_char(Characteristics.BATTERY_CHARGE_FULL_ETA)
         )
-        if math.isnan(raw):
-            return None
-        return float(raw)
-
-    async def get_total_dab_count(self) -> int:
-        return int(parse_float(await self.read_gatt_char(Characteristics.TOTAL_DAB_COUNT)))
-
-    async def get_trip_dab_count(self) -> int:
-        return int(parse_float(await self.read_gatt_char(Characteristics.TRIP_HEAT_CYCLES)))
-
-    async def get_daily_dab_count(self) -> float:
-        return round(parse_float(await self.read_gatt_char(Characteristics.DABS_PER_DAY)), 1)
-
-    async def get_heater_temp_c(self) -> float | None:
-        raw = parse_float(await self.read_gatt_char(Characteristics.HEATER_TEMP))
-        if math.isnan(raw):
-            return None
         return raw
 
-    async def get_state_elapsed_time(self) -> float:
-        return parse_float(
+    async def get_total_dab_count(self) -> int:
+        return safe_int_from_float_bytes(
+            await self.read_gatt_char(Characteristics.TOTAL_DAB_COUNT)
+        )
+
+    async def get_trip_dab_count(self) -> int:
+        return safe_int_from_float_bytes(
+            await self.read_gatt_char(Characteristics.TRIP_HEAT_CYCLES)
+        )
+
+    async def get_daily_dab_count(self) -> float:
+        raw = finite_float(
+            await self.read_gatt_char(Characteristics.DABS_PER_DAY)
+        )
+        return round(raw, 1) if raw is not None else 0.0
+
+    async def get_heater_temp_c(self) -> float | None:
+        return finite_float(await self.read_gatt_char(Characteristics.HEATER_TEMP))
+
+    async def get_state_elapsed_time(self) -> float | None:
+        return finite_float(
             await self.read_gatt_char(Characteristics.STATE_ELAPSED_TIME)
         )
 
-    async def get_state_total_time(self) -> float:
-        return parse_float(
+    async def get_state_total_time(self) -> float | None:
+        return finite_float(
             await self.read_gatt_char(Characteristics.STATE_TOTAL_TIME)
         )
 
     async def get_operating_state(self) -> int:
         data = await self.read_gatt_char(Characteristics.OPERATING_STATE)
         if self.use_lorax_protocol:
-            return int.from_bytes(data, "little")
-        return int(parse_float(data))
+            return int.from_bytes(data, "little") if data else 0
+        return safe_int_from_float_bytes(data)
 
     async def get_profile(self) -> int:
         data = await self.read_gatt_char(Characteristics.PROFILE_CURRENT)
         if self.use_lorax_protocol:
-            return int.from_bytes(data, "little")
-        return int(round(parse_float(data)))
+            return int.from_bytes(data, "little") if data else 0
+        raw = finite_float(data)
+        return safe_int_from_float(round(raw), default=0) if raw is not None else 0
 
     async def change_profile(self, profile: int, *, current: bool = False) -> None:
         if not self.use_lorax_protocol:
@@ -762,11 +780,12 @@ class PuffcoBleakClient(BleakClient):
 
     async def get_profile_temp(self, profile: int) -> float:
         await self.change_profile(profile)
-        return parse_float(
+        raw = finite_float(
             await self.read_gatt_char(
                 Characteristics.PROFILE_PREHEAT_TEMP, number=profile
             )
         )
+        return raw if raw is not None else 0.0
 
     async def set_profile_time(self, seconds: float, profile: int) -> None:
         await self.change_profile(profile)
@@ -778,25 +797,143 @@ class PuffcoBleakClient(BleakClient):
 
     async def get_profile_time(self, profile: int) -> float:
         await self.change_profile(profile)
-        return parse_float(
+        raw = finite_float(
             await self.read_gatt_char(
                 Characteristics.PROFILE_PREHEAT_TIME, number=profile
             )
         )
+        return raw if raw is not None else 0.0
+
+    async def boost_heat_cycle(self) -> None:
+        await self.send_mode_command(DeviceCommands.HEAT_CYCLE_BOOST)
+
+    async def get_boost_temp(self, profile: int) -> float:
+        await self.change_profile(profile)
+        raw = finite_float(
+            await self.read_gatt_char(Characteristics.BOOST_TEMP, number=profile)
+        )
+        return raw if raw is not None else 0.0
+
+    async def set_boost_temp(self, profile: int, celsius: float) -> None:
+        await self.change_profile(profile)
+        await self.write_gatt_char(
+            Characteristics.BOOST_TEMP,
+            pack_float(celsius),
+            number=profile,
+        )
+
+    async def get_boost_time(self, profile: int) -> float:
+        await self.change_profile(profile)
+        raw = finite_float(
+            await self.read_gatt_char(Characteristics.BOOST_TIME, number=profile)
+        )
+        return raw if raw is not None else 0.0
+
+    async def set_boost_time(self, profile: int, seconds: float) -> None:
+        await self.change_profile(profile)
+        await self.write_gatt_char(
+            Characteristics.BOOST_TIME,
+            pack_float(seconds),
+            number=profile,
+        )
+
+    async def get_profile_name(self, profile: int) -> str:
+        raw = await self.read_gatt_char(Characteristics.PROFILE_NAME, number=profile)
+        return raw.decode("utf-8", errors="ignore").strip("\x00")
+
+    async def set_profile_name(self, profile: int, name: str) -> None:
+        await self.write_gatt_char(
+            Characteristics.PROFILE_NAME,
+            bytearray(name.encode("utf-8")[:32]),
+            number=profile,
+        )
+
+    async def get_profile_color(self, profile: int) -> tuple[int, int, int]:
+        from puffco_ble.encoding import parse_profile_color
+
+        raw = await self.read_gatt_char(Characteristics.PROFILE_COLOR, number=profile)
+        return parse_profile_color(raw)
+
+    async def set_profile_color(self, profile: int, r: int, g: int, b: int) -> None:
+        from puffco_ble.encoding import pack_static_lantern_color
+
+        await self.write_gatt_char(
+            Characteristics.PROFILE_COLOR,
+            pack_static_lantern_color(r, g, b),
+            number=profile,
+        )
+
+    async def get_chamber_type(self) -> int:
+        data = await self.read_gatt_char(Characteristics.CHAMBER_TYPE)
+        if self.use_lorax_protocol:
+            return int.from_bytes(data, "little") if data else 0
+        return safe_int_from_float_bytes(data)
+
+    async def get_approx_dabs_remaining(self) -> int:
+        data = await self.read_gatt_char(Characteristics.APPROX_DABS_REMAINING)
+        if self.use_lorax_protocol:
+            value = parse_lorax_short_number(data, max_reasonable=10_000)
+            return safe_int_from_float(value) if value is not None else 0
+        return safe_int_from_float_bytes(data)
+
+    async def get_uptime_seconds(self) -> float:
+        data = await self.read_gatt_char(Characteristics.UPTIME)
+        if self.use_lorax_protocol:
+            value = parse_lorax_short_number(data, max_reasonable=100_000_000)
+            return value if value is not None and math.isfinite(value) else 0.0
+        raw = finite_float(data)
+        return raw if raw is not None else 0.0
+
+    async def get_total_heat_cycle_time(self) -> float:
+        data = await self.read_gatt_char(Characteristics.TOTAL_HEAT_CYCLE_TIME)
+        if self.use_lorax_protocol:
+            value = parse_lorax_short_number(data, max_reasonable=100_000_000)
+            return value if value is not None and math.isfinite(value) else 0.0
+        raw = finite_float(data)
+        return raw if raw is not None else 0.0
+
+    async def get_serial_number(self) -> str:
+        raw = await self.read_gatt_char(Characteristics.SERIAL_NUMBER)
+        return raw.decode("utf-8", errors="ignore").strip("\x00")
+
+    async def get_led_brightness_segments(self) -> tuple[int, int, int, int]:
+        data = await self.read_gatt_char(Characteristics.LANTERN_BRIGHTNESS)
+        if len(data) >= 4:
+            return (int(data[0]), int(data[1]), int(data[2]), int(data[3]))
+        val = int(max(data)) if data else 255
+        return (val, val, val, val)
+
+    async def set_led_brightness_segments(
+        self, ring: int, glass: int, main: int, battery: int
+    ) -> None:
+        vals = [
+            min(Constants.BRIGHTNESS_MAX, max(Constants.BRIGHTNESS_MIN, v))
+            for v in (ring, glass, main, battery)
+        ]
+        await self.write_gatt_char(Characteristics.LANTERN_BRIGHTNESS, bytearray(vals))
 
     async def set_stealth_mode(self, enabled: bool) -> None:
+        if enabled == self.stealth_mode:
+            return
+        from puffco_ble.encoding import pack_lantern_on
+
         await self.write_gatt_char(
-            Characteristics.STEALTH_STATUS, bytearray([int(enabled), 0, 0, 0])
+            Characteristics.STEALTH_STATUS,
+            pack_lantern_on(enabled, lorax=self.use_lorax_protocol),
         )
+        self.stealth_mode = enabled
 
     async def get_stealth_mode(self) -> bool:
         data = await self.read_gatt_char(Characteristics.STEALTH_STATUS)
         if not data:
-            return False
+            return self.stealth_mode if self.stealth_mode is not None else False
         # Lorax exposes stealth as a 1-byte flag; Flat firmware uses a float32.
         if self.use_lorax_protocol or len(data) < 4:
-            return bool(data[0])
-        return bool(int(parse_float(data)))
+            value = bool(data[0])
+        else:
+            value = bool(safe_int_from_float_bytes(data))
+        self.stealth_mode = value
+        return value
 
     async def send_lantern_status(self, enabled: bool) -> None:
         if enabled == self.lantern_enabled:
@@ -847,7 +984,9 @@ class PuffcoBleakClient(BleakClient):
         return max(data)
 
     async def send_lantern_brightness(self, value: int) -> None:
-        val = min(Constants.BRIGHTNESS_MAX, max(Constants.BRIGHTNESS_MIN, value))
+        from puffco_ble.encoding import clamp_byte
+
+        val = clamp_byte(value)
         await self.write_gatt_char(
             Characteristics.LANTERN_BRIGHTNESS, bytearray([val] * 4)
         )
@@ -860,5 +999,19 @@ class PuffcoBleakClient(BleakClient):
 
     async def get_device_birthday(self) -> str:
         raw = await self.read_gatt_char(Characteristics.DEVICE_BIRTHDAY)
-        ts = parse_uint32(raw)
-        return str(datetime.fromtimestamp(ts).date())
+        if self.use_lorax_protocol:
+            text = bytes(raw).decode("utf-8", errors="ignore").strip("\x00").strip()
+            if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+                return text[:10]
+            ts = parse_lorax_short_number(raw, max_reasonable=2_000_000_000)
+            if ts is not None and ts >= 1_000_000_000:
+                try:
+                    return str(datetime.fromtimestamp(safe_int_from_float(ts)).date())
+                except (OSError, OverflowError, ValueError):
+                    return text
+            return text
+        try:
+            ts = parse_uint32(raw)
+            return str(datetime.fromtimestamp(ts).date())
+        except (OSError, OverflowError, ValueError):
+            return ""

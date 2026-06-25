@@ -1,0 +1,20 @@
+# Snippet — paste into NODE_02 R&D_OFFICE (or Office) entities card in your main dashboard
+# Adds a console link + quick status rows matching your vault terminal style.
+
+          - type: section
+            label: VAPORIZATION_CORE (PEAK PRO)
+          - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+            name: '> REACTOR_STATE'
+            icon: mdi:flask-outline
+          - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heat_time_remaining
+            name: '> CYCLE_TIMER'
+            icon: mdi:timer-sand
+          - entity: switch.peak_pro_00059_0c_43_14_b7_91_9c_heat_session
+            name: '>> HEAT_SESSION_BUS'
+          - type: button
+            name: '>> LINK_VAPORIZATION_CONSOLE'
+            icon: mdi:monitor-dashboard
+            action_name: CONNECT
+            tap_action:
+              action: navigate
+              navigation_path: /dashboard-home/peak-pro-holotape

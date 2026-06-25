@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, PROFILE_COUNT
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoEntity
+from .entity import PuffcoControllableEntity
 
 
 async def async_setup_entry(
@@ -21,7 +21,7 @@ async def async_setup_entry(
     async_add_entities([PuffcoActiveProfileSelect(coordinator)])
 
 
-class PuffcoActiveProfileSelect(PuffcoEntity, SelectEntity):
+class PuffcoActiveProfileSelect(PuffcoControllableEntity, SelectEntity):
     _attr_translation_key = "active_profile"
     _attr_entity_category = EntityCategory.CONFIG
     _attr_icon = "mdi:fire-circle"

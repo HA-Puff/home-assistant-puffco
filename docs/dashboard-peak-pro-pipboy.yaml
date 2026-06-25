@@ -1,8 +1,7 @@
-# Pip-Boy panel for Peak Pro 00059
+# Pip-Boy panel for Peak Pro
 # Paste into HA: Settings → Dashboards → Add dashboard → Raw configuration editor
+# Setup: find-replace DEVICE_SLUG with your entity prefix (see docs/DASHBOARDS.md)
 # Requires: Mushroom Cards, theme Pip-Boy (optional card_mod for green borders)
-#
-# Device slug: peak_pro_00059_0c_43_14_b7_91_9c
 
 title: Peak Pro
 theme: Pip-Boy
@@ -17,15 +16,15 @@ cards:
       - type: vertical-stack
         cards:
           - type: custom:mushroom-template-card
-            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+            entity: sensor.DEVICE_SLUG_operating_state
             primary: "=== [ NODE_PEAK: VAPORIZATION_CORE ] ==="
             secondary: >-
               SYS_STATE: {{ states(entity) | replace('_', ' ') | upper }}
-              // HEATER: {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature') }}°C
-              // BATT: {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery') }}%
+              // HEATER: {{ states('sensor.DEVICE_SLUG_heater_temperature') }}°C
+              // BATT: {{ states('sensor.DEVICE_SLUG_battery') }}%
             icon: mdi:fire-circle
             icon_color: >-
-              {% set s = states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') %}
+              {% set s = states('sensor.DEVICE_SLUG_operating_state') %}
               {% if s in ['heat_cycle_active'] %}red
               {% elif s in ['heat_cycle_preheat', 'heat_cycle_fade'] %}amber
               {% elif s == 'idle' %}green
@@ -43,17 +42,17 @@ cards:
             entities:
               - type: section
                 label: BLE MATRIX STATUS
-              - entity: binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_connected
+              - entity: binary_sensor.DEVICE_SLUG_connected
                 name: "> GATT_SESSION_LINK"
-              - entity: binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_advertising
+              - entity: binary_sensor.DEVICE_SLUG_advertising
                 name: "> BLE_BEACON_BROADCAST"
-              - entity: binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_charging
+              - entity: binary_sensor.DEVICE_SLUG_charging
                 name: "> DOCK_RECHARGE_MATRIX"
               - type: section
                 label: CORE FIRMWARE BUS
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_firmware
+              - entity: sensor.DEVICE_SLUG_firmware
                 name: "> FW_REVISION_STRING"
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+              - entity: sensor.DEVICE_SLUG_operating_state
                 name: "> OPERATING_STATE_REGISTER"
 
           - type: entities
@@ -61,11 +60,11 @@ cards:
             show_header_toggle: false
             state_color: true
             entities:
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature
+              - entity: sensor.DEVICE_SLUG_heater_temperature
                 name: "> LIVE_HEATER_TEMP_PROBE"
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery
+              - entity: sensor.DEVICE_SLUG_battery
                 name: "> POWER_CELL_SOC"
-              - entity: select.peak_pro_00059_0c_43_14_b7_91_9c_active_profile
+              - entity: select.DEVICE_SLUG_active_profile
                 name: ">> ACTIVE_HEAT_PROFILE_BUS"
 
           - type: custom:mushroom-template-card
@@ -78,7 +77,7 @@ cards:
           - type: horizontal-stack
             cards:
               - type: custom:mushroom-template-card
-                entity: button.peak_pro_00059_0c_43_14_b7_91_9c_start_session
+                entity: button.DEVICE_SLUG_start_session
                 primary: ""
                 secondary: IGNITE
                 icon: mdi:fire
@@ -87,9 +86,9 @@ cards:
                   action: perform-action
                   perform_action: button.press
                   target:
-                    entity_id: button.peak_pro_00059_0c_43_14_b7_91_9c_start_session
+                    entity_id: button.DEVICE_SLUG_start_session
               - type: custom:mushroom-template-card
-                entity: button.peak_pro_00059_0c_43_14_b7_91_9c_abort_session
+                entity: button.DEVICE_SLUG_abort_session
                 primary: ""
                 secondary: ABORT
                 icon: mdi:stop-circle
@@ -98,9 +97,9 @@ cards:
                   action: perform-action
                   perform_action: button.press
                   target:
-                    entity_id: button.peak_pro_00059_0c_43_14_b7_91_9c_abort_session
+                    entity_id: button.DEVICE_SLUG_abort_session
               - type: custom:mushroom-template-card
-                entity: button.peak_pro_00059_0c_43_14_b7_91_9c_reconnect
+                entity: button.DEVICE_SLUG_reconnect
                 primary: ""
                 secondary: LINK
                 icon: mdi:bluetooth-connect
@@ -109,7 +108,7 @@ cards:
                   action: perform-action
                   perform_action: button.press
                   target:
-                    entity_id: button.peak_pro_00059_0c_43_14_b7_91_9c_reconnect
+                    entity_id: button.DEVICE_SLUG_reconnect
 
       # ── COLUMN 2: HEAT PROFILES ──────────────────────────────────────
       - type: vertical-stack
@@ -121,20 +120,20 @@ cards:
             entities:
               - type: section
                 label: TEMPERATURE SETPOINT REGISTERS
-              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_1_temperature
+              - entity: number.DEVICE_SLUG_profile_1_temperature
                 name: ">> PROFILE_01_SETPOINT"
-              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_2_temperature
+              - entity: number.DEVICE_SLUG_profile_2_temperature
                 name: ">> PROFILE_02_SETPOINT"
-              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_3_temperature
+              - entity: number.DEVICE_SLUG_profile_3_temperature
                 name: ">> PROFILE_03_SETPOINT"
-              - entity: number.peak_pro_00059_0c_43_14_b7_91_9c_profile_4_temperature
+              - entity: number.DEVICE_SLUG_profile_4_temperature
                 name: ">> PROFILE_04_SETPOINT"
 
           - type: custom:mushroom-template-card
-            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature
+            entity: sensor.DEVICE_SLUG_heater_temperature
             primary: "=== [ THERMAL_RAMP_MONITOR ] ==="
             secondary: >-
-              {% set s = states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') %}
+              {% set s = states('sensor.DEVICE_SLUG_operating_state') %}
               {% if s in ['heat_cycle_preheat', 'heat_cycle_active', 'heat_cycle_fade'] %}
               CYCLE ACTIVE — {{ states(entity) }}°C LIVE
               {% else %}
@@ -142,7 +141,7 @@ cards:
               {% endif %}
             icon: mdi:thermometer-lines
             icon_color: >-
-              {% set s = states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') %}
+              {% set s = states('sensor.DEVICE_SLUG_operating_state') %}
               {% if s == 'heat_cycle_active' %}red
               {% elif s in ['heat_cycle_preheat', 'heat_cycle_fade'] %}amber
               {% else %}green{% endif %}
@@ -153,7 +152,7 @@ cards:
                 }
 
           - type: gauge
-            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature
+            entity: sensor.DEVICE_SLUG_heater_temperature
             name: CHAMBER TEMP
             unit: "°C"
             min: 0
@@ -175,13 +174,13 @@ cards:
             show_header_toggle: false
             state_color: true
             entities:
-              - entity: switch.peak_pro_00059_0c_43_14_b7_91_9c_stealth_mode
+              - entity: switch.DEVICE_SLUG_stealth_mode
                 name: ">> CLOAKING_FIELD_GENERATOR"
 
           - type: conditional
             conditions:
               - condition: state
-                entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state
+                entity: sensor.DEVICE_SLUG_operating_state
                 state:
                   - heat_cycle_preheat
                   - heat_cycle_active
@@ -190,8 +189,8 @@ cards:
               type: markdown
               content: |
                 ## ⚠ HEAT CYCLE IN PROGRESS
-                **STATE:** {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_operating_state') | replace('_', ' ') | upper }}
-                **TEMP:** {{ states('sensor.peak_pro_00059_0c_43_14_b7_91_9c_heater_temperature') }} °C
+                **STATE:** {{ states('sensor.DEVICE_SLUG_operating_state') | replace('_', ' ') | upper }}
+                **TEMP:** {{ states('sensor.DEVICE_SLUG_heater_temperature') }} °C
               card_mod:
                 style: |
                   ha-card {
@@ -210,27 +209,25 @@ cards:
             entities:
               - type: section
                 label: DAB COUNT REGISTERS
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_total_dabs
+              - entity: sensor.DEVICE_SLUG_total_dabs
                 name: "> LIFETIME_DAB_COUNTER"
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_trip_dabs
+              - entity: sensor.DEVICE_SLUG_trip_dabs
                 name: "> TRIP_DAB_COUNTER"
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_dabs_per_day
+              - entity: sensor.DEVICE_SLUG_dabs_per_day
                 name: "> DAILY_THROUGHPUT_AVG"
-              - entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_daily_dabs
-                name: "> DAILY_METER_ROLLUP"
 
           - type: custom:mushroom-template-card
-            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery
+            entity: sensor.DEVICE_SLUG_battery
             primary: "=== [ POWER_CELL_STATUS ] ==="
             secondary: >-
-              {% if is_state('binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_charging', 'on') %}
-              RECHARGING — {{ state_attr('sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery', 'charge_eta_minutes') | default('?', true) }} MIN TO FULL
+              {% if is_state('binary_sensor.DEVICE_SLUG_charging', 'on') %}
+              RECHARGING — {{ state_attr('sensor.DEVICE_SLUG_battery', 'charge_eta_minutes') | default('?', true) }} MIN TO FULL
               {% else %}
-              SOC: {{ states(entity) }}% — {{ state_attr('sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery', 'charge_state') | default('off dock', true) | upper }}
+              SOC: {{ states(entity) }}% — {{ state_attr('sensor.DEVICE_SLUG_battery', 'charge_state') | default('off dock', true) | upper }}
               {% endif %}
             icon: mdi:battery-charging
             icon_color: >-
-              {% if is_state('binary_sensor.peak_pro_00059_0c_43_14_b7_91_9c_charging', 'on') %}green
+              {% if is_state('binary_sensor.DEVICE_SLUG_charging', 'on') %}green
               {% elif states(entity) | int(0) < 25 %}red
               {% elif states(entity) | int(0) < 50 %}amber
               {% else %}green{% endif %}
@@ -241,7 +238,7 @@ cards:
                 }
 
           - type: gauge
-            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_battery
+            entity: sensor.DEVICE_SLUG_battery
             name: POWER CELL
             unit: "%"
             min: 0
@@ -266,7 +263,7 @@ cards:
             disabled: true
 
           - type: light
-            entity: light.peak_pro_00059_0c_43_14_b7_91_9c_lantern
+            entity: light.DEVICE_SLUG_lantern
             name: LANTERN OUTPUT
             icon: mdi:lava-lamp
             card_mod:
@@ -276,7 +273,7 @@ cards:
                 }
 
           - type: custom:mushroom-template-card
-            entity: light.peak_pro_00059_0c_43_14_b7_91_9c_lantern
+            entity: light.DEVICE_SLUG_lantern
             primary: ">> LANTERN_STATUS"
             secondary: >-
               {% if is_state(entity, 'on') %}

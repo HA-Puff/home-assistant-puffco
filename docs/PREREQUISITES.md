@@ -8,8 +8,8 @@ Complete this checklist before running hardware validation or deploying to Home 
 |-------|------------|-------|
 | Device model | _fill in_ | Peak Pro, 3DXL, Proxy, etc. |
 | Bluetooth MAC | _fill in_ | Settings → Bluetooth on phone, or scan with `puffco-cli scan` |
-| Firmware revision | AW (expected) | Shown in official app or `puffco-cli info` |
-| Protocol | Lorax (expected for FW AW) | Auto-detected on connect |
+| Firmware revision | e.g. AW | Shown in official app or `puffco-cli info` |
+| Protocol | Lorax (typical on recent FW) | Auto-detected on connect |
 
 ## Development machine
 

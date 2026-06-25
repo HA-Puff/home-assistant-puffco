@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import math
+from datetime import date, timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -26,7 +27,7 @@ from .const import (
 )
 from .coordinator import PuffcoDataUpdateCoordinator
 from .entity import PuffcoPersistentStateEntity
-from .helpers import OPERATING_STATE_OPTIONS
+from .helpers import OPERATING_STATE_OPTIONS, CHAMBER_TYPE_OPTIONS
 
 
 async def async_setup_entry(
@@ -35,19 +36,23 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: PuffcoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            PuffcoTotalDabsSensor(coordinator),
-            PuffcoTripDabsSensor(coordinator),
-            PuffcoDabsPerDaySensor(coordinator),
-            PuffcoHeaterTempSensor(coordinator),
-            PuffcoHeatTimeRemainingSensor(coordinator),
-            PuffcoHeatCycleTimer(coordinator),
-            PuffcoBatterySensor(coordinator),
-            PuffcoFirmwareSensor(coordinator),
-            PuffcoOperatingStateSensor(coordinator),
-        ]
-    )
+    entities: list[SensorEntity] = [
+        PuffcoTotalDabsSensor(coordinator),
+        PuffcoTripDabsSensor(coordinator),
+        PuffcoDabsPerDaySensor(coordinator),
+        PuffcoHeaterTempSensor(coordinator),
+        PuffcoHeatTimeRemainingSensor(coordinator),
+        PuffcoHeatCycleTimer(coordinator),
+        PuffcoBatterySensor(coordinator),
+        PuffcoFirmwareSensor(coordinator),
+        PuffcoOperatingStateSensor(coordinator),
+        PuffcoChamberTypeSensor(coordinator),
+        PuffcoApproxDabsRemainingSensor(coordinator),
+        PuffcoDeviceBirthdaySensor(coordinator),
+        PuffcoUptimeSensor(coordinator),
+        PuffcoTotalHeatTimeSensor(coordinator),
+    ]
+    async_add_entities(entities)
 
 
 class PuffcoSensorBase(PuffcoPersistentStateEntity, SensorEntity):
@@ -98,7 +103,8 @@ class PuffcoDabsPerDaySensor(PuffcoSensorBase):
     @property
     def native_value(self) -> float | None:
         if self.coordinator.data:
-            return self.coordinator.data.dabs_per_day
+            value = self.coordinator.data.dabs_per_day
+            return value if math.isfinite(value) else None
         return None
 
 
@@ -115,7 +121,8 @@ class PuffcoHeaterTempSensor(PuffcoSensorBase):
     @property
     def native_value(self) -> float | None:
         if self.coordinator.data:
-            return self.coordinator.data.heater_temp_c
+            temp = self.coordinator.data.heater_temp_c
+            return temp if temp is not None and math.isfinite(temp) else None
         return None
 
 
@@ -134,23 +141,28 @@ class PuffcoHeatTimeRemainingSensor(PuffcoSensorBase):
 
     @property
     def native_value(self) -> float | None:
-        data = self.coordinator.data
-        if not data or not is_heat_cycle_state(data.operating_state):
-            return None
-        if data.state_total_s is None or data.state_elapsed_s is None:
-            return None
-        return max(0.0, round(data.state_total_s - data.state_elapsed_s))
+        return self.coordinator.heat_seconds_remaining()
 
     @property
     def extra_state_attributes(self) -> dict:
         data = self.coordinator.data
         if not data:
             return {}
-        attrs = {ATTR_OPERATING_STATE: data.operating_state}
-        if data.state_elapsed_s is not None:
+        attrs = {
+            **self._connectivity_attributes(),
+            ATTR_OPERATING_STATE: data.operating_state,
+            "active": is_heat_cycle_state(data.operating_state)
+            or self.coordinator.session_timer_active,
+            "local_timer": self.coordinator.session_timer_active,
+        }
+        if data.state_elapsed_s is not None and math.isfinite(data.state_elapsed_s):
             attrs["state_elapsed_seconds"] = round(data.state_elapsed_s)
-        if data.state_total_s is not None:
+        if data.state_total_s is not None and math.isfinite(data.state_total_s):
             attrs["state_total_seconds"] = round(data.state_total_s)
+        if self.coordinator.session_finishes_at is not None:
+            attrs["finishes_at"] = dt_util.as_local(
+                self.coordinator.session_finishes_at
+            ).isoformat()
         return attrs
 
 
@@ -168,22 +180,34 @@ class PuffcoHeatCycleTimer(PuffcoSensorBase):
 
     @property
     def native_value(self) -> float | None:
-        data = self.coordinator.data
-        if not data or not is_heat_cycle_state(data.operating_state):
-            return None
-        if data.state_total_s is None or data.state_elapsed_s is None:
-            return None
-        return max(0.0, round(data.state_total_s - data.state_elapsed_s))
+        return self.coordinator.heat_seconds_remaining()
 
     @property
     def extra_state_attributes(self) -> dict:
-        remaining = self.native_value
-        if remaining is None:
+        data = self.coordinator.data
+        if not data:
             return {}
-        finishes = dt_util.utcnow() + timedelta(seconds=remaining)
+        remaining = self.native_value
+        active = (
+            is_heat_cycle_state(data.operating_state)
+            or self.coordinator.session_timer_active
+        )
+        if not active:
+            return {**self._connectivity_attributes(), "active": False}
+        if remaining is None or not math.isfinite(remaining):
+            return {
+                **self._connectivity_attributes(),
+                "active": True,
+                "local_timer": self.coordinator.session_timer_active,
+            }
+        finishes = self.coordinator.session_finishes_at
+        if finishes is None:
+            finishes = dt_util.utcnow() + timedelta(seconds=remaining)
         return {
+            **self._connectivity_attributes(),
             "finishes_at": dt_util.as_local(finishes).isoformat(),
             "active": True,
+            "local_timer": self.coordinator.session_timer_active,
         }
 
 
@@ -209,9 +233,9 @@ class PuffcoBatterySensor(PuffcoSensorBase):
             return {}
         data = self.coordinator.data
         attrs = {"charge_state": data.battery_charge_state}
-        if data.charge_eta_seconds is not None:
+        if data.charge_eta_seconds is not None and math.isfinite(data.charge_eta_seconds):
             attrs["charge_eta_minutes"] = round(data.charge_eta_seconds / 60)
-        return attrs
+        return {**self._connectivity_attributes(), **attrs}
 
 
 class PuffcoFirmwareSensor(PuffcoSensorBase):
@@ -234,9 +258,11 @@ class PuffcoFirmwareSensor(PuffcoSensorBase):
         if not self.coordinator.data:
             return {}
         return {
+            **self._connectivity_attributes(),
             ATTR_PROTOCOL: self.coordinator.data.protocol,
             ATTR_FIRMWARE: self.coordinator.data.firmware,
             ATTR_ACTIVE_PROFILE: self.coordinator.data.active_profile + 1,
+            "serial_number": self.coordinator.data.serial_number or None,
         }
 
 
@@ -261,4 +287,103 @@ class PuffcoOperatingStateSensor(PuffcoSensorBase):
     def extra_state_attributes(self) -> dict:
         if not self.coordinator.data:
             return {}
-        return {ATTR_OPERATING_STATE: self.coordinator.data.operating_state}
+        return {
+            **self._connectivity_attributes(),
+            ATTR_OPERATING_STATE: self.coordinator.data.operating_state,
+        }
+
+
+class PuffcoChamberTypeSensor(PuffcoSensorBase):
+    _attr_translation_key = "chamber_type"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(CHAMBER_TYPE_OPTIONS)
+    _attr_icon = "mdi:cube-outline"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_chamber_type"
+
+    @property
+    def native_value(self) -> str | None:
+        if self.coordinator.data:
+            return self.coordinator.data.chamber_type
+        return None
+
+
+class PuffcoApproxDabsRemainingSensor(PuffcoSensorBase):
+    _attr_translation_key = "approx_dabs_remaining"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery-heart"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_approx_dabs_remaining"
+
+    @property
+    def native_value(self) -> int | None:
+        if self.coordinator.data:
+            return self.coordinator.data.approx_dabs_remaining
+        return None
+
+
+class PuffcoDeviceBirthdaySensor(PuffcoSensorBase):
+    _attr_translation_key = "device_birthday"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.DATE
+    _attr_icon = "mdi:cake-variant"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_device_birthday"
+
+    @property
+    def native_value(self) -> date | None:
+        if not self.coordinator.data or not self.coordinator.data.device_birthday:
+            return None
+        raw = self.coordinator.data.device_birthday
+        if isinstance(raw, date):
+            return raw
+        try:
+            return date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            return None
+
+
+class PuffcoUptimeSensor(PuffcoSensorBase):
+    _attr_translation_key = "uptime"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_uptime"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data:
+            return self.coordinator.data.uptime_seconds
+        return None
+
+
+class PuffcoTotalHeatTimeSensor(PuffcoSensorBase):
+    _attr_translation_key = "total_heat_time"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:fire-clock"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_total_heat_time"
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data:
+            return self.coordinator.data.total_heat_cycle_time_s
+        return None

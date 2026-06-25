@@ -2,7 +2,7 @@
 
 Standalone Python library for Puffco Peak Pro Bluetooth control. Supports Flat GATT (Firmware W/X) and Lorax path-based protocol (Firmware AG+).
 
-Adapted from [PuffcoPC](https://github.com/meekzyr/PuffcoPC) and the [Puffco reverse-engineering writeup](../Existing-Integration/Puffco-Reverse-Engineering-Writeup-main/README.md).
+Adapted from [PuffcoPC](https://github.com/meekzyr/PuffcoPC) and community Peak Pro BLE reverse-engineering notes.
 
 ## Install
 

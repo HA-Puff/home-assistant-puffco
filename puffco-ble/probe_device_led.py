@@ -21,7 +21,9 @@ from puffco_ble.client import PuffcoClient
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 _LOG = logging.getLogger("probe")
 
-MAC = os.environ.get("PUFFCO_MAC", "0C:43:14:B7:91:9C")
+MAC = os.environ.get("PUFFCO_MAC")
+if not MAC:
+    raise SystemExit("Set PUFFCO_MAC to your Peak's Bluetooth address (e.g. AA:BB:CC:DD:EE:FF).")
 
 PATHS = [
     "/p/sys/fw/api",

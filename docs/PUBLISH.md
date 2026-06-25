@@ -2,57 +2,63 @@
 
 Repository: [HA-Puff/home-assistant-puffco](https://github.com/HA-Puff/home-assistant-puffco)
 
-## 1. Git identity (use noreply — not your personal email)
+## Git identity (repo-local)
 
-```powershell
-cd "z:\OneDrive\Documents\Puffco-Integration"
-git init
+Use the throwaway account’s **noreply** email so commits do not expose a personal address:
+
+```bash
+cd /path/to/home-assistant-puffco
 git config user.email "YOUR_ID+HA-Puff@users.noreply.github.com"
 git config user.name "HA-Puff"
 ```
 
-Replace `YOUR_ID` with the numeric ID from GitHub → **Settings → Emails** (enable “Keep my email addresses private”).
+Find `YOUR_ID` under GitHub → **Settings → Emails** (with “Keep my email addresses private” enabled).
 
 Verify before committing:
 
-```powershell
+```bash
 git config user.email
+git log -1 --format="%an <%ae>"
 ```
 
-## 2. Build release zip (optional)
+## Release workflow
 
-```powershell
-.\scripts\build_release.ps1
-```
+1. Bump `version` in `custom_components/puffco/manifest.json`.
+2. Add a section to `CHANGELOG.md`.
+3. If you changed `puffco-ble/`, run `scripts/sync_ha_lib.ps1` (or `.sh`) so `_vendor/` matches.
+4. Commit and push to `main`.
+5. Optional: build a zip for manual installs:
 
-Output: `dist/puffco-home-assistant-1.0.0.zip`
+   ```powershell
+   .\scripts\build_release.ps1 -Version 1.0.1
+   ```
 
-## 3. First push
+   Output: `dist/puffco-home-assistant-<version>.zip`
 
-```powershell
-git add .
+6. On GitHub: **Releases → Draft new release**
+   - Tag: `v<version>` (e.g. `v1.0.1`)
+   - Title: short summary
+   - Body: paste from `CHANGELOG.md`
+   - Attach the zip if you built one
+   - **Publish release**
+
+## Push (first time or routine)
+
+```bash
+git add -A
 git status
-git commit -m "Release v1.0.0"
-git branch -M main
-git remote add origin https://github.com/HA-Puff/home-assistant-puffco.git
-git push -u origin main
+git commit -m "Release v1.0.1"
+git push origin main
 ```
 
-## 4. GitHub release
+Authenticate as **HA-Puff** when prompted (browser or `gh auth login`).
 
-1. [Releases](https://github.com/HA-Puff/home-assistant-puffco/releases) → **Draft new release**
-2. Tag: `v1.0.0`
-3. Title: `1.0.0 — First public release`
-4. Body: paste from `docs/RELEASE_NOTES_v1.0.0.md` or `CHANGELOG.md`
-5. Attach `dist/puffco-home-assistant-1.0.0.zip`
-6. **Publish release**
+## HACS
 
-## 5. HACS
-
-**HACS → Custom repositories** → add:
+Users add the custom repository once:
 
 ```
 https://github.com/HA-Puff/home-assistant-puffco
 ```
 
-Category: **Integration** → Install **Puffco** → Restart HA.
+Category: **Integration** → Install **Puffco** → Restart Home Assistant.

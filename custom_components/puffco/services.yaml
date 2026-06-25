@@ -18,6 +18,11 @@ abort_session:
     device:
       integration: puffco
 
+boost_session:
+  target:
+    device:
+      integration: puffco
+
 set_profile:
   target:
     device:

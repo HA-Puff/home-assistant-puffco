@@ -1,8 +1,8 @@
 # Puffco Peak Pro LED / Lantern Reverse-Engineering Notes
 
-Findings from validating LED control on firmware **AW** (peach series, MAC
-`0C:43:14:B7:91:9C`). Captured while building the BLE library so the base-ring
-("mood light") feature can be finished later.
+Findings from validating LED control on recent Lorax firmware (peach-series Peak Pro).
+Captured while building the BLE library so the base-ring ("mood light") feature can be
+finished later.
 
 ## What works today
 
@@ -67,5 +67,5 @@ base ring from a **V3 `CompiledMoodLight`** blob written to `${target}ColorApi3`
    `/p/app/ltrn/colr` for a known pattern (e.g. solid red, Lava Lamp), then
    replay / parameterize them. Fastest reliable path.
 2. **Port the compiler**: reproduce `MoodLightCompiler` + `CompiledMoodLight.serialize`
-   for the peach projector defs (large effort; deobfuscated source in
-   `Existing-Integration/.../puffco.app_2.4.3_deobfuscated_v2.js`).
+   for the peach projector defs (large effort; see community reverse-engineering
+   writeups and the Puffco mobile app Lorax stack).

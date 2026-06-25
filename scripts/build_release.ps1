@@ -1,6 +1,6 @@
 # Build a HACS/manual install zip (integration folder only).
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.0.1"
 )
 
 $ErrorActionPreference = "Stop"

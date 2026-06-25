@@ -55,7 +55,7 @@ class LanternMode(IntEnum):
 
 
 class LanternAnimation:
-    DISCO_MODE = b"\xff \x08\x01\x00\x00\x00\x00"
+    DISCO_MODE = b"\xff\xff\x00\x00\x01\x00\x00\x00"
     ROTATING = b"\xff\xff\x00\x00\x15\x00\x00\x00"
     PULSING = b"\xff\xff\x00\x00\x05\x00\x00\x00"
     ALL = (PULSING, ROTATING, DISCO_MODE)
@@ -76,6 +76,8 @@ class ChamberType(IntEnum):
     CLASSIC = 1
     HERBAL = 2
     PERFORMANCE = 3
+    XL = 4
+    TOAD = 5
 
 
 class OperatingState(IntEnum):
@@ -178,6 +180,10 @@ class Characteristics:
     DABS_PER_DAY = "F9A98C15-C651-4F34-B656-D100BF58003B"
     TOTAL_DAB_COUNT = "F9A98C15-C651-4F34-B656-D100BF58002F"
     TRIP_HEAT_CYCLES = "F9A98C15-C651-4F34-B656-D100BF580051"
+    TOTAL_HEAT_CYCLE_TIME = "F9A98C15-C651-4F34-B656-D100BF580030"
+    UPTIME = "F9A98C15-C651-4F34-B656-D100BF580035"
+    APPROX_DABS_REMAINING = "F9A98C15-C651-4F34-B656-D100BF58003A"
+    CHAMBER_TYPE = "F9A98C15-C651-4F34-B656-D100BF58003F"
     STEALTH_STATUS = "F9A98C15-C651-4F34-B656-D100BF580042"
     DEVICE_BIRTHDAY = "F9A98C15-C651-4F34-B656-D100BF58004E"
 
@@ -227,6 +233,10 @@ class LoraxCharacteristics:
     DABS_PER_DAY = "/p/app/info/dpd"
     TOTAL_DAB_COUNT = "/p/app/odom/0/nc"
     TRIP_HEAT_CYCLES = "/p/app/odom/1/nc"
+    TOTAL_HEAT_CYCLE_TIME = "/p/app/odom/0/tm"
+    UPTIME = "/p/sys/uptm"
+    APPROX_DABS_REMAINING = "/p/app/info/drem"
+    CHAMBER_TYPE = "/p/htr/chmt"
     STEALTH_STATUS = "/u/app/ui/stlm"
     DEVICE_BIRTHDAY = "/u/sys/bday"
 

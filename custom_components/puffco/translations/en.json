@@ -4,9 +4,16 @@
     "step": {
       "user": {
         "title": "Set up Puffco",
-        "description": "Select a discovered Puffco device, or choose to enter a MAC address manually. Put the device in pairing mode (hold power until the light bar glows blue).",
+        "description": "Select a discovered Puffco, scan for nearby devices, or enter a MAC manually. Wake the Peak (pairing mode: hold power until the light bar glows blue).",
         "data": {
           "address": "Device"
+        }
+      },
+      "scan_failed": {
+        "title": "No Puffco devices found",
+        "description": "No Puffco devices were seen during the scan. Wake the Peak, enter pairing mode (blue light bar), move it closer to Home Assistant, then scan again.",
+        "data": {
+          "action": "Next step"
         }
       },
       "manual": {
@@ -32,6 +39,12 @@
     "abort": {
       "already_configured": "This device is already configured.",
       "cannot_connect": "Could not connect or authenticate to the device."
+    },
+    "progress": {
+      "scanning": {
+        "title": "Scanning for Puffco devices",
+        "description": "Wake your Peak (blue pairing bar). Listening for {timeout} seconds…"
+      }
     }
   },
   "options": {
@@ -41,7 +54,9 @@
         "data": {
           "show_diagnostics": "Show diagnostic entities (advertising, connected, firmware, operating state)",
           "block_start_while_charging": "Block starting a session while charging",
-          "fast_poll": "Faster background polling when idle (uses more Bluetooth traffic)"
+          "fast_poll": "Faster background polling when idle (uses more Bluetooth traffic)",
+          "wake_on_command": "Wait for the Peak to wake before failing a command (tap-to-wake)",
+          "idle_disconnect": "Release the Bluetooth link after ~3 minutes idle so the Peak can sleep"
         }
       }
     }
@@ -56,6 +71,7 @@
     "action_type": {
       "start_session": "Start heat session",
       "abort_session": "Abort heat session",
+      "boost_session": "Boost heat session",
       "reconnect": "Reconnect Bluetooth",
       "set_profile": "Set active profile"
     },
@@ -71,7 +87,16 @@
       "heater": { "name": "Heater" }
     },
     "event": {
-      "session": { "name": "Session" }
+      "session": {
+        "name": "Session",
+        "event_types": {
+          "started": { "name": "Heat session started" },
+          "finished": { "name": "Heat session finished" },
+          "heat_cycle_preheat": { "name": "Heat cycle preheat" },
+          "heat_cycle_active": { "name": "Heat cycle active" },
+          "heat_cycle_fade": { "name": "Heat cycle fade" }
+        }
+      }
     },
     "sensor": {
       "total_dabs": { "name": "Total dabs" },
@@ -82,30 +107,49 @@
       "heat_cycle_timer": { "name": "Heat cycle timer" },
       "battery": { "name": "Battery" },
       "firmware": { "name": "Firmware" },
-      "operating_state": { "name": "Operating state" }
+      "operating_state": { "name": "Operating state" },
+      "chamber_type": { "name": "Chamber type" },
+      "approx_dabs_remaining": { "name": "Approximate dabs remaining" },
+      "device_birthday": { "name": "Device birthday" },
+      "uptime": { "name": "Uptime" },
+      "total_heat_time": { "name": "Total heat time" }
     },
     "binary_sensor": {
+      "awake": { "name": "Awake" },
       "advertising": { "name": "Advertising" },
       "connected": { "name": "Connected" },
       "charging": { "name": "Charging" }
     },
     "number": {
       "profile_temp": { "name": "Profile {profile} temperature" },
-      "profile_time": { "name": "Profile {profile} duration" }
+      "profile_time": { "name": "Profile {profile} duration" },
+      "profile_boost_temp": { "name": "Profile {profile} boost temperature" },
+      "profile_boost_time": { "name": "Profile {profile} boost duration" },
+      "lantern_brightness": { "name": "Lantern brightness" },
+      "led_brightness_ring": { "name": "LED brightness (ring)" },
+      "led_brightness_glass": { "name": "LED brightness (glass)" },
+      "led_brightness_main": { "name": "LED brightness (main)" },
+      "led_brightness_battery": { "name": "LED brightness (battery)" }
     },
     "button": {
       "reconnect": { "name": "Reconnect" },
       "start_session": { "name": "Start session" },
-      "abort_session": { "name": "Abort session" }
+      "abort_session": { "name": "Abort session" },
+      "boost_session": { "name": "Boost session" }
     },
     "light": {
-      "lantern": { "name": "Lantern" }
+      "lantern": { "name": "Lantern" },
+      "profile_color": { "name": "Profile {profile} color" }
     },
     "select": {
       "active_profile": { "name": "Active profile" }
     },
     "switch": {
+      "heat_session": { "name": "Heat session" },
       "stealth_mode": { "name": "Stealth mode" }
+    },
+    "text": {
+      "profile_name": { "name": "Profile {profile} name" }
     }
   }
 }
