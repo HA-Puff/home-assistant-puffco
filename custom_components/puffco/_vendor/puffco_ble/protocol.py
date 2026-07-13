@@ -11,12 +11,14 @@ from bleak.backends.scanner import AdvertisementData
 from puffco_ble.constants import (
     LORAX_SERVICE_UUID,
     PEAK_PRO_MAC_PREFIXES,
+    PUFFCO_MANUFACTURER_ID,
     SERVICE_UUID,
 )
 
 # Names seen in the wild (custom device name, default, pairing mode)
 PUFFCO_NAME_HINTS = (
     "puffco",
+    "puff",
     "peak",
     "peak pro",
     "proxy",
@@ -30,6 +32,8 @@ def is_peak_pro_advertisement(
         return True
     uuids = {u.lower() for u in advertisement.service_uuids}
     if SERVICE_UUID.lower() in uuids or LORAX_SERVICE_UUID.lower() in uuids:
+        return True
+    if PUFFCO_MANUFACTURER_ID in advertisement.manufacturer_data:
         return True
     name = (device.name or advertisement.local_name or "").lower()
     if any(hint in name for hint in PUFFCO_NAME_HINTS):
