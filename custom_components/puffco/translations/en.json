@@ -16,6 +16,10 @@
           "action": "Next step"
         }
       },
+      "scan_done": {
+        "title": "Scan complete",
+        "description": "Scan finished. Select a device from the list to continue."
+      },
       "manual": {
         "title": "Set up Puffco",
         "description": "Enter the Bluetooth MAC address of your Puffco device. Put the device in pairing mode (hold power until the light bar glows blue).",
