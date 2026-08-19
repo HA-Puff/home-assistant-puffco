@@ -154,6 +154,7 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._discovery: BluetoothServiceInfoBleak | None = None
         self._discovered: dict[str, str] = {}
+        self._scan_task: asyncio.Task[None] | None = None
 
     def _configured_addresses(self) -> set[str]:
         return {address.upper() for address in self._async_current_ids()}
@@ -229,12 +230,28 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self.async_step_scan_failed()
             return await self.async_step_user()
 
+        if self._scan_task is not None and self._scan_task.done():
+            self._scan_task = None
+            return self.async_show_progress_done(next_step_id="scan_done")
+
+        if self._scan_task is None:
+            self._scan_task = self.hass.async_create_task(self._async_run_scan())
+
         self.context["title_placeholders"] = {"timeout": str(SCAN_TIMEOUT_S)}
         return self.async_show_progress(
             step_id="scan",
             progress_action="scanning",
-            progress_task=self._async_run_scan(),
+            description_placeholders={"timeout": str(SCAN_TIMEOUT_S)},
+            progress_task=self._scan_task,
         )
+
+    async def async_step_scan_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Show scan results after the progress step completes."""
+        if not self._discovered:
+            return await self.async_step_scan_failed()
+        return await self.async_step_user()
 
     async def _async_run_scan(self) -> None:
         self._discovered = await _async_scan_puffco_devices(
