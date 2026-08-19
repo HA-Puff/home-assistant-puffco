@@ -8,6 +8,7 @@ import inspect
 import logging
 import math
 import struct
+import sys
 import time
 from asyncio import Event, ensure_future, wait_for
 from datetime import datetime
@@ -76,6 +77,7 @@ class PuffcoBleakClient(BleakClient):
         self._lorax_reply_indicate = False
         self._lorax_notifications_active = False
         self._already_paired = False
+        self._skip_explicit_pair = False
 
     def reset_pairing_cache(self) -> None:
         """Forget in-session Lorax pairing state (after bond heal / disconnect)."""
@@ -269,16 +271,27 @@ class PuffcoBleakClient(BleakClient):
 
         Web Bluetooth and Android pair automatically; on WinRT we must request
         it explicitly or the device silently drops notifications.
+
+        On BlueZ, pair() after GATT is already up often returns
+        AuthenticationFailed and drops the link. Skip a second attempt once
+        that happens — the handshake can still succeed on a reconnect without
+        an explicit pair().
         """
         try:
             if getattr(self, "_already_paired", False):
                 return True
+            if getattr(self, "_skip_explicit_pair", False):
+                _LOGGER.info("Lorax init: skipping OS pair() after prior AuthenticationFailed")
+                return False
             _LOGGER.info("Lorax init: bonding (OS pairing) for encrypted link...")
             await self.pair()
             self._already_paired = True
             _LOGGER.info("Bond result: paired (encrypted link)")
             return True
         except (BleakError, OSError, NotImplementedError) as err:
+            err_text = str(err)
+            if "AuthenticationFailed" in err_text or "Authentication Failed" in err_text:
+                self._skip_explicit_pair = True
             _LOGGER.warning("Bonding attempt failed/unsupported: %s", err)
             return False
 
@@ -464,17 +477,30 @@ class PuffcoBleakClient(BleakClient):
         self.use_lorax_protocol = True
         limits_ok = False
 
-        # Strategy matrix: most Windows failures are "subscribed but no replies",
-        # which is the device refusing notifications on an unbonded link. We try
-        # (bond?, subscribe-mode) combinations until GET_LIMITS actually replies.
-        strategies = [
-            ("notify", True),   # Windows requires bonded link for Lorax replies
-            ("notify", False),  # fallback if already bonded in OS settings
-        ]
+        # Windows needs an explicit bond or Lorax notifications are silent.
+        # BlueZ often rejects pair() after GATT is already up (AuthenticationFailed)
+        # and drops the link — try the handshake first and only pair if needed.
+        if sys.platform == "win32":
+            strategies = [
+                ("notify", True),
+                ("notify", False),
+            ]
+        else:
+            strategies = [
+                ("notify", False),
+                ("notify", True),
+            ]
         for sub_mode, do_bond in strategies:
-            self._ensure_connected("notifications")
+            if not self.is_connected:
+                _LOGGER.warning("GATT dropped during Lorax init; reconnect needed")
+                return False
             if do_bond:
                 await self._ensure_bonded()
+                if not self.is_connected:
+                    _LOGGER.warning(
+                        "OS pair() dropped the GATT link; reconnect without pairing"
+                    )
+                    return False
 
             _LOGGER.info(
                 "Lorax init: enabling notifications (mode=%s, bonded=%s)...",

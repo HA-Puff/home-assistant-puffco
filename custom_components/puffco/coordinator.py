@@ -1261,6 +1261,8 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         async with self._lock:
             if clear_bond:
                 self._client.reset_bond_state()
+                with contextlib.suppress(Exception):
+                    await self._client.unpair()
             await self._client.disconnect()
             device = bluetooth.async_ble_device_from_address(
                 self.hass, self.mac, connectable=True

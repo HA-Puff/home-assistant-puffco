@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.21] - 2026-08-18
+
+### Fixed
+
+- **BlueZ pairing** — do not call `pair()` before the Lorax handshake on Linux, and do not auto-unpair on a failed connect. Explicit `pair()` after GATT is up was returning `AuthenticationFailed` and dropping the link; wiping the host bond then left the Peak with mismatched keys.
+
 ## [1.1.12] - 2026-06-08
 
 ### Fixed

@@ -362,19 +362,14 @@ class PuffcoClient:
             )
         self._connected_once = True
         last_err: Exception | None = None
-        for heal in ("none", "bond", "unpair"):
+        # Do not auto-unpair here. Clearing the BlueZ bond while the Peak still
+        # holds the old keys causes AuthenticationFailed on every later pair().
+        for heal in ("none", "reconnect"):
             try:
-                if heal == "bond":
-                    await self._bond_if_needed(force=True)
-                elif heal == "unpair":
-                    await self._heal_stale_bond()
+                if heal == "reconnect":
+                    await self._reconnect_without_unpair()
                 await self._finalize_connection()
                 self._bonded = True
-                if heal == "unpair":
-                    _LOGGER.info(
-                        "Reconnected to %s after clearing stale OS bond",
-                        self.address,
-                    )
                 return
             except Exception as err:
                 last_err = err
@@ -386,6 +381,32 @@ class PuffcoClient:
                 )
         assert last_err is not None
         raise last_err
+
+    async def _reconnect_without_unpair(self) -> None:
+        """Open a fresh GATT session without touching the OS bond."""
+        _LOGGER.info("Reconnecting to %s without clearing OS bond", self.address)
+        device = self._ble_device
+        if self._client is not None:
+            self._client.reset_pairing_cache()
+            with contextlib.suppress(Exception):
+                await self._client.disconnect()
+        self._client = None
+        if device is None:
+            raise BleakError(f"No BLE device object for reconnect ({self.address})")
+        if self._connector is not None:
+            self._client = await self._connector(device, self._on_disconnect)
+        else:
+            self._client = PuffcoBleakClient(
+                device,
+                disconnected_callback=self._on_disconnect,
+                timeout=self.connect_timeout,
+            )
+            await self._client.connect(timeout=self.connect_timeout)
+        if not self._client.is_connected:
+            raise BleakError(
+                f"GATT session did not reconnect ({self.address})"
+            )
+        self._connected_once = True
 
     async def _heal_stale_bond(self) -> None:
         """Remove a stale OS bond and open a fresh GATT session."""
