@@ -361,7 +361,7 @@ class PuffcoClient:
                 f"GATT session did not stay connected to {self.address}"
             )
         self._connected_once = True
-        last_err: Exception | None = None
+        first_err: Exception | None = None
         # Do not auto-unpair here. Clearing the BlueZ bond while the Peak still
         # holds the old keys causes AuthenticationFailed on every later pair().
         for heal in ("none", "reconnect"):
@@ -372,15 +372,20 @@ class PuffcoClient:
                 self._bonded = True
                 return
             except Exception as err:
-                last_err = err
+                # Keep the first failure: once the link is down every later step
+                # reports a misleading downstream symptom ("Service Discovery has
+                # not been performed yet", "Lorax service missing") that hides the
+                # real cause.
+                if first_err is None:
+                    first_err = err
                 _LOGGER.warning(
                     "Handshake for %s failed (heal=%s): %s",
                     self.address,
                     heal,
                     err,
                 )
-        assert last_err is not None
-        raise last_err
+        assert first_err is not None
+        raise first_err
 
     async def _reconnect_without_unpair(self) -> None:
         """Open a fresh GATT session without touching the OS bond."""
@@ -467,6 +472,11 @@ class PuffcoClient:
     async def _finalize_connection(self) -> None:
         """Detect protocol, init Lorax, and read identity (shared by both paths)."""
         assert self._client is not None
+        if not self._client.is_connected:
+            raise BleakError(
+                f"Link already dropped before GATT discovery ({self.address}); "
+                "the Peak hung up — check that it is not refusing to bond"
+            )
         lorax_service = self._client.services.get_service(
             LoraxCharacteristics.LORAX_SERVICE_UUID
         )

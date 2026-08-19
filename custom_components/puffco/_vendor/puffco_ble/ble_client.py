@@ -455,14 +455,21 @@ class PuffcoBleakClient(BleakClient):
         return None
 
     async def init_lorax_protocol(self) -> bool:
-        # App v3.6.26 web/desktop: version -> notifications -> sticky prune -> limits -> auth
-        # (No bond-trigger reads — Android-only and Silabs OTA reads drop WinRT sessions.)
+        # Order mirrors the PuffcoPC reference client (puffco/btnet/client.py),
+        # which drives the Peak with no bonding at all: subscribe to BOTH Lorax
+        # notification chars first, then read the version, then GET_LIMITS, then
+        # auth. Commands issued before the reply/event CCCDs are live get no reply.
         #
-        # An idle (already-bonded) Peak drops a freshly-connected link within ~0.5s
-        # if the central performs no GATT operation (WinRT only finalises the
-        # connection once we request info). So read the version IMMEDIATELY with
-        # short retries instead of sleeping first — that read both detects the
-        # protocol and keeps the link alive.
+        # An idle Peak drops a freshly-connected link within ~0.5s if the central
+        # performs no GATT operation (WinRT only finalises the connection once we
+        # request info), so the subscribe doubles as that first operation.
+        _LOGGER.info("Lorax init: enabling notifications...")
+        try:
+            await self._ensure_lorax_notifications()
+        except (OSError, BleakError) as err:
+            _LOGGER.error("Failed to start Lorax notifications: %s", err)
+            return False
+
         _LOGGER.info("Lorax init: reading protocol version...")
         version_data = await self._read_lorax_version_with_retry()
         if version_data is None:
@@ -480,49 +487,64 @@ class PuffcoBleakClient(BleakClient):
         self.use_lorax_protocol = True
         limits_ok = False
 
-        # Windows needs an explicit bond or Lorax notifications are silent.
-        # BlueZ often rejects pair() after GATT is already up (AuthenticationFailed)
-        # and drops the link — try the handshake first and only pair if needed.
+        # Windows needs an explicit bond or Lorax notifications stay silent.
+        # Never bond on BlueZ. pair() makes the Peak abort SMP and hang up
+        # (reproducible in bare bluetoothctl with a NoInputNoOutput agent and no
+        # host bond), and the Android triggerBond read kills the link within ~3s.
+        # The reference client proves neither is required, so fall back across
+        # subscription modes instead.
         if sys.platform == "win32":
             strategies = [
-                ("notify", True),
-                ("notify", False),
+                ("notify", "pair"),
+                ("notify", "none"),
             ]
         else:
             strategies = [
-                ("notify", False),
-                ("notify", True),
+                ("notify", "none"),
+                ("indicate", "none"),
             ]
-        for sub_mode, do_bond in strategies:
+        for sub_mode, bond_mode in strategies:
             if not self.is_connected:
                 _LOGGER.warning("GATT dropped during Lorax init; reconnect needed")
                 return False
-            if do_bond:
+            if bond_mode == "pair":
                 await self._ensure_bonded()
                 if not self.is_connected:
                     _LOGGER.warning(
                         "OS pair() dropped the GATT link; reconnect without pairing"
                     )
                     return False
+            elif bond_mode == "trigger":
+                await self._trigger_bond()
+                if not self.is_connected:
+                    _LOGGER.warning(
+                        "Bond trigger read dropped the GATT link; reconnect needed"
+                    )
+                    return False
 
-            _LOGGER.info(
-                "Lorax init: enabling notifications (mode=%s, bonded=%s)...",
-                sub_mode,
-                do_bond,
-            )
-            try:
-                await self._ensure_lorax_notifications(
-                    reply_indicate=(sub_mode == "indicate")
+            # Notifications are already live from the pre-version subscribe; only
+            # resubscribe when this strategy needs a different reply mode.
+            desired_indicate = sub_mode == "indicate"
+            if (
+                not self._lorax_notifications_active
+                or desired_indicate != self._lorax_reply_indicate
+            ):
+                _LOGGER.info(
+                    "Lorax init: enabling notifications (mode=%s, bond=%s)...",
+                    sub_mode,
+                    bond_mode,
                 )
-            except (OSError, BleakError) as err:
-                _LOGGER.error("Failed to start Lorax notifications: %s", err)
-                continue
+                try:
+                    await self._ensure_lorax_notifications(
+                        reply_indicate=desired_indicate
+                    )
+                except (OSError, BleakError) as err:
+                    _LOGGER.error("Failed to start Lorax notifications: %s", err)
+                    continue
 
-            if self.lorax_proto_ver != 0:
-                _LOGGER.info("Lorax init: sticky handle prune...")
-                self._ensure_connected("sticky prune")
-                await self._setup_sticky_prune()
-
+            # No sticky prune here: PRUNE_FILE_HANDLES does not exist in the
+            # reference client's opcode table, and sending it costs a 15s timeout
+            # before GET_LIMITS is even attempted.
             _LOGGER.info("Lorax init: requesting protocol limits...")
             self._ensure_connected("get limits")
             if await self._lorax_notifications_probe():
@@ -530,9 +552,9 @@ class PuffcoBleakClient(BleakClient):
                 break
 
             _LOGGER.warning(
-                "Lorax replies not received (mode=%s, bonded=%s); trying next strategy",
+                "Lorax replies not received (mode=%s, bond=%s); trying next strategy",
                 sub_mode,
-                do_bond,
+                bond_mode,
             )
 
         if not limits_ok:

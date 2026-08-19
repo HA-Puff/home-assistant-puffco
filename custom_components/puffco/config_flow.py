@@ -87,6 +87,14 @@ def _device_label(info: BluetoothServiceInfoBleak) -> str:
     return f"{name} ({info.address})"
 
 
+def _fallback_device_name(hass: HomeAssistant, address: str) -> str:
+    """Entry title for an address, never the RSSI-decorated picker label."""
+    info = bluetooth.async_last_service_info(hass, address, connectable=True)
+    if info is not None and info.name:
+        return info.name
+    return f"Puffco {address}"
+
+
 async def _async_scan_puffco_devices(
     hass: HomeAssistant, *, exclude: set[str]
 ) -> dict[str, str]:
@@ -203,7 +211,7 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if address == OPTION_SCAN:
                 return await self.async_step_scan()
             return await self._async_validate_and_create(
-                address, self._discovered.get(address, address)
+                address, _fallback_device_name(self.hass, address)
             )
 
         self._load_cached_devices()

@@ -56,7 +56,7 @@ def _session_still_active(data: PuffcoData) -> bool:
         return False
     if data.state_total_s is None or data.state_elapsed_s is None:
         return False
-    if math.isnan(data.state_total_s) or math.isnan(data.state_elapsed_s):
+    if not math.isfinite(data.state_total_s) or not math.isfinite(data.state_elapsed_s):
         return False
     return (data.state_total_s - data.state_elapsed_s) > 3.0
 
@@ -65,11 +65,12 @@ def _heat_seconds_remaining_estimate(data: PuffcoData) -> float:
     if (
         data.state_total_s is None
         or data.state_elapsed_s is None
-        or math.isnan(data.state_total_s)
-        or math.isnan(data.state_elapsed_s)
+        or not math.isfinite(data.state_total_s)
+        or not math.isfinite(data.state_elapsed_s)
     ):
         return 0.0
-    return max(0.0, data.state_total_s - data.state_elapsed_s)
+    remaining = max(0.0, data.state_total_s - data.state_elapsed_s)
+    return remaining if math.isfinite(remaining) else 0.0
 
 
 async def _fetch_slow_fields(client: PuffcoBleakClient) -> dict:
@@ -91,6 +92,13 @@ async def _fetch_slow_fields(client: PuffcoBleakClient) -> dict:
         except Exception as err:
             _LOGGER.debug("Slow field %s read failed: %s", name, err)
             return default
+
+    chamber_type = "unknown"
+    approx_dabs_remaining: int | None = None
+    device_birthday = ""
+    uptime_seconds: float | None = None
+    total_heat_cycle_time_s: float | None = None
+    serial_number = ""
 
     chamber_type = chamber_type_name(
         await _slow("chamber_type", client.get_chamber_type(), 0)
@@ -353,7 +361,7 @@ class PuffcoClient:
                 f"GATT session did not stay connected to {self.address}"
             )
         self._connected_once = True
-        last_err: Exception | None = None
+        first_err: Exception | None = None
         # Do not auto-unpair here. Clearing the BlueZ bond while the Peak still
         # holds the old keys causes AuthenticationFailed on every later pair().
         for heal in ("none", "reconnect"):
@@ -364,15 +372,20 @@ class PuffcoClient:
                 self._bonded = True
                 return
             except Exception as err:
-                last_err = err
+                # Keep the first failure: once the link is down every later step
+                # reports a misleading downstream symptom ("Service Discovery has
+                # not been performed yet", "Lorax service missing") that hides the
+                # real cause.
+                if first_err is None:
+                    first_err = err
                 _LOGGER.warning(
                     "Handshake for %s failed (heal=%s): %s",
                     self.address,
                     heal,
                     err,
                 )
-        assert last_err is not None
-        raise last_err
+        assert first_err is not None
+        raise first_err
 
     async def _reconnect_without_unpair(self) -> None:
         """Open a fresh GATT session without touching the OS bond."""
@@ -459,6 +472,11 @@ class PuffcoClient:
     async def _finalize_connection(self) -> None:
         """Detect protocol, init Lorax, and read identity (shared by both paths)."""
         assert self._client is not None
+        if not self._client.is_connected:
+            raise BleakError(
+                f"Link already dropped before GATT discovery ({self.address}); "
+                "the Peak hung up — check that it is not refusing to bond"
+            )
         lorax_service = self._client.services.get_service(
             LoraxCharacteristics.LORAX_SERVICE_UUID
         )
@@ -825,6 +843,7 @@ class PuffcoClient:
     ) -> None:
         """Apply lantern color, effect, brightness, and on/off."""
         from puffco_ble.constants import LANTERN_TIME_SEC
+        from puffco_ble.constants import LanternMode
         from puffco_ble.encoding import clamp_brightness, clamp_byte, pack_static_lantern_color
         from puffco_ble.lantern_effects import (
             DEFAULT_LANTERN_EFFECT,
@@ -854,10 +873,11 @@ class PuffcoClient:
                 if bleak.lantern_color != preset:
                     await bleak.send_lantern_color_bytes(preset)
             else:
-                mode = effect.mode if effect.mode is not None else 1
-                payload = bytearray(pack_static_lantern_color(r, g, b, mode=int(mode)))
+                mode = effect.mode if effect.mode is not None else LanternMode.STATIC
+                mode_byte = clamp_byte(int(mode), default=int(LanternMode.STATIC))
+                payload = bytearray(pack_static_lantern_color(r, g, b, mode=mode_byte))
                 if bleak.lantern_color != payload:
-                    await bleak.send_lantern_color(r, g, b, mode=int(mode))
+                    await bleak.send_lantern_color(r, g, b, mode=mode_byte)
 
             if enabled:
                 if not already_on:

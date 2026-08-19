@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.22] - 2026-08-18
+
+### Fixed
+
+- **Never call `pair()` on BlueZ** — the Peak aborts SMP and drops the link when the central initiates pairing, reproducible in bare `bluetoothctl` with a `NoInputNoOutput` agent and no host bond. The Android `triggerBond` read (Silabs OTA app-version characteristic) is just as fatal, killing the GATT link in ~3s. Neither is needed: the Lorax command and reply characteristics carry no encryption flags (`write-without-response` / `notify`), so Linux now falls back across subscription modes instead of trying to bond. A bond is still established out of band, by the OS, before the integration connects.
+- **Handshake order now matches the reference client** — subscribe to both Lorax notification characteristics *before* reading the protocol version and issuing any command. Commands sent before the reply/event CCCDs are live get no reply.
+- **Dropped the sticky handle prune from init** — `PRUNE_FILE_HANDLES` is absent from the reference client's opcode table, and sending it cost a 15s timeout before `GET_LIMITS` was even attempted.
+- **Misleading connection errors** — the handshake retry loop now reports the first failure instead of the last. Once the link is down, every later step reported a downstream symptom (`Service Discovery has not been performed yet`, `Lorax service missing from GATT discovery`) that hid the real cause. GATT discovery also distinguishes an already-dropped link from a genuinely absent Lorax service.
+- **Entry title no longer includes signal strength** — picking a device from the config flow dropdown used the picker label as the entry title, so every entity ended up named `… · -36 dBm`.
+
 ## [1.1.21] - 2026-08-18
 
 ### Fixed

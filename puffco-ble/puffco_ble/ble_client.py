@@ -49,6 +49,9 @@ from puffco_ble.encoding import (
     pack_lorax_mode_command,
     pack_mode_command,
     parse_float,
+    finite_float,
+    safe_int_from_float,
+    safe_int_from_float_bytes,
     parse_lorax_short_number,
     parse_uint32,
 )
@@ -452,14 +455,21 @@ class PuffcoBleakClient(BleakClient):
         return None
 
     async def init_lorax_protocol(self) -> bool:
-        # App v3.6.26 web/desktop: version -> notifications -> sticky prune -> limits -> auth
-        # (No bond-trigger reads — Android-only and Silabs OTA reads drop WinRT sessions.)
+        # Order mirrors the PuffcoPC reference client (puffco/btnet/client.py),
+        # which drives the Peak with no bonding at all: subscribe to BOTH Lorax
+        # notification chars first, then read the version, then GET_LIMITS, then
+        # auth. Commands issued before the reply/event CCCDs are live get no reply.
         #
-        # An idle (already-bonded) Peak drops a freshly-connected link within ~0.5s
-        # if the central performs no GATT operation (WinRT only finalises the
-        # connection once we request info). So read the version IMMEDIATELY with
-        # short retries instead of sleeping first — that read both detects the
-        # protocol and keeps the link alive.
+        # An idle Peak drops a freshly-connected link within ~0.5s if the central
+        # performs no GATT operation (WinRT only finalises the connection once we
+        # request info), so the subscribe doubles as that first operation.
+        _LOGGER.info("Lorax init: enabling notifications...")
+        try:
+            await self._ensure_lorax_notifications()
+        except (OSError, BleakError) as err:
+            _LOGGER.error("Failed to start Lorax notifications: %s", err)
+            return False
+
         _LOGGER.info("Lorax init: reading protocol version...")
         version_data = await self._read_lorax_version_with_retry()
         if version_data is None:
@@ -477,49 +487,64 @@ class PuffcoBleakClient(BleakClient):
         self.use_lorax_protocol = True
         limits_ok = False
 
-        # Windows needs an explicit bond or Lorax notifications are silent.
-        # BlueZ often rejects pair() after GATT is already up (AuthenticationFailed)
-        # and drops the link — try the handshake first and only pair if needed.
+        # Windows needs an explicit bond or Lorax notifications stay silent.
+        # Never bond on BlueZ. pair() makes the Peak abort SMP and hang up
+        # (reproducible in bare bluetoothctl with a NoInputNoOutput agent and no
+        # host bond), and the Android triggerBond read kills the link within ~3s.
+        # The reference client proves neither is required, so fall back across
+        # subscription modes instead.
         if sys.platform == "win32":
             strategies = [
-                ("notify", True),
-                ("notify", False),
+                ("notify", "pair"),
+                ("notify", "none"),
             ]
         else:
             strategies = [
-                ("notify", False),
-                ("notify", True),
+                ("notify", "none"),
+                ("indicate", "none"),
             ]
-        for sub_mode, do_bond in strategies:
+        for sub_mode, bond_mode in strategies:
             if not self.is_connected:
                 _LOGGER.warning("GATT dropped during Lorax init; reconnect needed")
                 return False
-            if do_bond:
+            if bond_mode == "pair":
                 await self._ensure_bonded()
                 if not self.is_connected:
                     _LOGGER.warning(
                         "OS pair() dropped the GATT link; reconnect without pairing"
                     )
                     return False
+            elif bond_mode == "trigger":
+                await self._trigger_bond()
+                if not self.is_connected:
+                    _LOGGER.warning(
+                        "Bond trigger read dropped the GATT link; reconnect needed"
+                    )
+                    return False
 
-            _LOGGER.info(
-                "Lorax init: enabling notifications (mode=%s, bonded=%s)...",
-                sub_mode,
-                do_bond,
-            )
-            try:
-                await self._ensure_lorax_notifications(
-                    reply_indicate=(sub_mode == "indicate")
+            # Notifications are already live from the pre-version subscribe; only
+            # resubscribe when this strategy needs a different reply mode.
+            desired_indicate = sub_mode == "indicate"
+            if (
+                not self._lorax_notifications_active
+                or desired_indicate != self._lorax_reply_indicate
+            ):
+                _LOGGER.info(
+                    "Lorax init: enabling notifications (mode=%s, bond=%s)...",
+                    sub_mode,
+                    bond_mode,
                 )
-            except (OSError, BleakError) as err:
-                _LOGGER.error("Failed to start Lorax notifications: %s", err)
-                continue
+                try:
+                    await self._ensure_lorax_notifications(
+                        reply_indicate=desired_indicate
+                    )
+                except (OSError, BleakError) as err:
+                    _LOGGER.error("Failed to start Lorax notifications: %s", err)
+                    continue
 
-            if self.lorax_proto_ver != 0:
-                _LOGGER.info("Lorax init: sticky handle prune...")
-                self._ensure_connected("sticky prune")
-                await self._setup_sticky_prune()
-
+            # No sticky prune here: PRUNE_FILE_HANDLES does not exist in the
+            # reference client's opcode table, and sending it costs a 15s timeout
+            # before GET_LIMITS is even attempted.
             _LOGGER.info("Lorax init: requesting protocol limits...")
             self._ensure_connected("get limits")
             if await self._lorax_notifications_probe():
@@ -527,9 +552,9 @@ class PuffcoBleakClient(BleakClient):
                 break
 
             _LOGGER.warning(
-                "Lorax replies not received (mode=%s, bonded=%s); trying next strategy",
+                "Lorax replies not received (mode=%s, bond=%s); trying next strategy",
                 sub_mode,
-                do_bond,
+                bond_mode,
             )
 
         if not limits_ok:
@@ -715,13 +740,15 @@ class PuffcoBleakClient(BleakClient):
         return raw.decode().strip("\x00")
 
     async def get_battery_percentage(self) -> int:
-        return int(parse_float(await self.read_gatt_char(Characteristics.BATTERY_SOC)))
+        return safe_int_from_float_bytes(
+            await self.read_gatt_char(Characteristics.BATTERY_SOC)
+        )
 
     async def get_battery_charge_state(self) -> int:
         data = await self.read_gatt_char(Characteristics.BATTERY_CHARGE_STATE)
         if self.use_lorax_protocol:
-            return int.from_bytes(data, "little")
-        return int(parse_float(data))
+            return int.from_bytes(data, "little") if data else 0
+        return safe_int_from_float_bytes(data)
 
     async def get_battery_charge_eta_seconds(
         self, state_id: int | None = None
@@ -732,55 +759,52 @@ class PuffcoBleakClient(BleakClient):
 
         if not is_battery_charging(state_id):
             return None
-        raw = parse_float(
+        raw = finite_float(
             await self.read_gatt_char(Characteristics.BATTERY_CHARGE_FULL_ETA)
         )
-        if math.isnan(raw):
-            return None
-        return float(raw)
+        return raw
 
     async def get_total_dab_count(self) -> int:
-        return int(parse_float(await self.read_gatt_char(Characteristics.TOTAL_DAB_COUNT)))
+        return safe_int_from_float_bytes(
+            await self.read_gatt_char(Characteristics.TOTAL_DAB_COUNT)
+        )
 
     async def get_trip_dab_count(self) -> int:
-        return int(parse_float(await self.read_gatt_char(Characteristics.TRIP_HEAT_CYCLES)))
+        return safe_int_from_float_bytes(
+            await self.read_gatt_char(Characteristics.TRIP_HEAT_CYCLES)
+        )
 
     async def get_daily_dab_count(self) -> float:
-        return round(parse_float(await self.read_gatt_char(Characteristics.DABS_PER_DAY)), 1)
+        raw = finite_float(
+            await self.read_gatt_char(Characteristics.DABS_PER_DAY)
+        )
+        return round(raw, 1) if raw is not None else 0.0
 
     async def get_heater_temp_c(self) -> float | None:
-        raw = parse_float(await self.read_gatt_char(Characteristics.HEATER_TEMP))
-        if math.isnan(raw):
-            return None
-        return raw
+        return finite_float(await self.read_gatt_char(Characteristics.HEATER_TEMP))
 
     async def get_state_elapsed_time(self) -> float | None:
-        raw = parse_float(
+        return finite_float(
             await self.read_gatt_char(Characteristics.STATE_ELAPSED_TIME)
         )
-        if math.isnan(raw):
-            return None
-        return raw
 
     async def get_state_total_time(self) -> float | None:
-        raw = parse_float(
+        return finite_float(
             await self.read_gatt_char(Characteristics.STATE_TOTAL_TIME)
         )
-        if math.isnan(raw):
-            return None
-        return raw
 
     async def get_operating_state(self) -> int:
         data = await self.read_gatt_char(Characteristics.OPERATING_STATE)
         if self.use_lorax_protocol:
-            return int.from_bytes(data, "little")
-        return int(parse_float(data))
+            return int.from_bytes(data, "little") if data else 0
+        return safe_int_from_float_bytes(data)
 
     async def get_profile(self) -> int:
         data = await self.read_gatt_char(Characteristics.PROFILE_CURRENT)
         if self.use_lorax_protocol:
-            return int.from_bytes(data, "little")
-        return int(round(parse_float(data)))
+            return int.from_bytes(data, "little") if data else 0
+        raw = finite_float(data)
+        return safe_int_from_float(round(raw), default=0) if raw is not None else 0
 
     async def change_profile(self, profile: int, *, current: bool = False) -> None:
         if not self.use_lorax_protocol:
@@ -804,11 +828,12 @@ class PuffcoBleakClient(BleakClient):
 
     async def get_profile_temp(self, profile: int) -> float:
         await self.change_profile(profile)
-        return parse_float(
+        raw = finite_float(
             await self.read_gatt_char(
                 Characteristics.PROFILE_PREHEAT_TEMP, number=profile
             )
         )
+        return raw if raw is not None else 0.0
 
     async def set_profile_time(self, seconds: float, profile: int) -> None:
         await self.change_profile(profile)
@@ -820,20 +845,22 @@ class PuffcoBleakClient(BleakClient):
 
     async def get_profile_time(self, profile: int) -> float:
         await self.change_profile(profile)
-        return parse_float(
+        raw = finite_float(
             await self.read_gatt_char(
                 Characteristics.PROFILE_PREHEAT_TIME, number=profile
             )
         )
+        return raw if raw is not None else 0.0
 
     async def boost_heat_cycle(self) -> None:
         await self.send_mode_command(DeviceCommands.HEAT_CYCLE_BOOST)
 
     async def get_boost_temp(self, profile: int) -> float:
         await self.change_profile(profile)
-        return parse_float(
+        raw = finite_float(
             await self.read_gatt_char(Characteristics.BOOST_TEMP, number=profile)
         )
+        return raw if raw is not None else 0.0
 
     async def set_boost_temp(self, profile: int, celsius: float) -> None:
         await self.change_profile(profile)
@@ -845,9 +872,10 @@ class PuffcoBleakClient(BleakClient):
 
     async def get_boost_time(self, profile: int) -> float:
         await self.change_profile(profile)
-        return parse_float(
+        raw = finite_float(
             await self.read_gatt_char(Characteristics.BOOST_TIME, number=profile)
         )
+        return raw if raw is not None else 0.0
 
     async def set_boost_time(self, profile: int, seconds: float) -> None:
         await self.change_profile(profile)
@@ -887,30 +915,30 @@ class PuffcoBleakClient(BleakClient):
         data = await self.read_gatt_char(Characteristics.CHAMBER_TYPE)
         if self.use_lorax_protocol:
             return int.from_bytes(data, "little") if data else 0
-        return int(parse_float(data))
+        return safe_int_from_float_bytes(data)
 
     async def get_approx_dabs_remaining(self) -> int:
         data = await self.read_gatt_char(Characteristics.APPROX_DABS_REMAINING)
         if self.use_lorax_protocol:
             value = parse_lorax_short_number(data, max_reasonable=10_000)
-            return int(value) if value is not None else 0
-        return int(parse_float(data))
+            return safe_int_from_float(value) if value is not None else 0
+        return safe_int_from_float_bytes(data)
 
     async def get_uptime_seconds(self) -> float:
         data = await self.read_gatt_char(Characteristics.UPTIME)
         if self.use_lorax_protocol:
             value = parse_lorax_short_number(data, max_reasonable=100_000_000)
-            return value if value is not None else 0.0
-        raw = parse_float(data)
-        return 0.0 if math.isnan(raw) else raw
+            return value if value is not None and math.isfinite(value) else 0.0
+        raw = finite_float(data)
+        return raw if raw is not None else 0.0
 
     async def get_total_heat_cycle_time(self) -> float:
         data = await self.read_gatt_char(Characteristics.TOTAL_HEAT_CYCLE_TIME)
         if self.use_lorax_protocol:
             value = parse_lorax_short_number(data, max_reasonable=100_000_000)
-            return value if value is not None else 0.0
-        raw = parse_float(data)
-        return 0.0 if math.isnan(raw) else raw
+            return value if value is not None and math.isfinite(value) else 0.0
+        raw = finite_float(data)
+        return raw if raw is not None else 0.0
 
     async def get_serial_number(self) -> str:
         raw = await self.read_gatt_char(Characteristics.SERIAL_NUMBER)
@@ -951,7 +979,7 @@ class PuffcoBleakClient(BleakClient):
         if self.use_lorax_protocol or len(data) < 4:
             value = bool(data[0])
         else:
-            value = bool(int(parse_float(data)))
+            value = bool(safe_int_from_float_bytes(data))
         self.stealth_mode = value
         return value
 
@@ -1026,7 +1054,7 @@ class PuffcoBleakClient(BleakClient):
             ts = parse_lorax_short_number(raw, max_reasonable=2_000_000_000)
             if ts is not None and ts >= 1_000_000_000:
                 try:
-                    return str(datetime.fromtimestamp(int(ts)).date())
+                    return str(datetime.fromtimestamp(safe_int_from_float(ts)).date())
                 except (OSError, OverflowError, ValueError):
                     return text
             return text
