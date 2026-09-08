@@ -362,12 +362,15 @@ class PuffcoClient:
             )
         self._connected_once = True
         first_err: Exception | None = None
-        # Do not auto-unpair here. Clearing the BlueZ bond while the Peak still
-        # holds the old keys causes AuthenticationFailed on every later pair().
-        for heal in ("none", "reconnect"):
+        # Prefer keeping an existing OS bond. Only clear it after a plain
+        # reconnect still fails — stale keys are the usual cause when the Peak
+        # is in pairing mode (blue bar) and Lorax replies never arrive.
+        for heal in ("none", "reconnect", "clear_bond"):
             try:
                 if heal == "reconnect":
                     await self._reconnect_without_unpair()
+                elif heal == "clear_bond":
+                    await self._heal_stale_bond()
                 await self._finalize_connection()
                 self._bonded = True
                 return

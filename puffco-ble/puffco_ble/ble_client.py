@@ -487,12 +487,15 @@ class PuffcoBleakClient(BleakClient):
         self.use_lorax_protocol = True
         limits_ok = False
 
-        # Windows needs an explicit bond or Lorax notifications stay silent.
-        # Never bond on BlueZ. pair() makes the Peak abort SMP and hang up
-        # (reproducible in bare bluetoothctl with a NoInputNoOutput agent and no
-        # host bond), and the Android triggerBond read kills the link within ~3s.
-        # The reference client proves neither is required, so fall back across
-        # subscription modes instead.
+        # Lorax reply notifications stay silent until the link is bonded on
+        # WinRT and on ESPHome Bluetooth proxies ("Insufficient authentication"
+        # / GET_LIMITS with no reply). Try subscription modes first without an
+        # explicit pair() so an existing OS bond can be reused, then fall back
+        # to pair() while the Peak is in pairing mode.
+        #
+        # On native BlueZ, pair() after GATT is up can AuthenticationFailed and
+        # drop the link — _ensure_bonded treats that as non-fatal and the outer
+        # reconnect heal path opens a fresh session.
         if sys.platform == "win32":
             strategies = [
                 ("notify", "pair"),
@@ -502,6 +505,8 @@ class PuffcoBleakClient(BleakClient):
             strategies = [
                 ("notify", "none"),
                 ("indicate", "none"),
+                ("notify", "pair"),
+                ("indicate", "pair"),
             ]
         for sub_mode, bond_mode in strategies:
             if not self.is_connected:

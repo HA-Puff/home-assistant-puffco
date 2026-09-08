@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.24] - 2026-09-07
+
+### Fixed
+
+- **ESPHome / BlueZ Lorax bond** — after `bond=none` leaves GET_LIMITS / auth silent (`Insufficient authentication`), retry with an explicit OS `pair()` while the Peak is in pairing mode. HA connect heal path now clears a stale bond only after plain reconnect fails.
+
+## [1.1.23] - 2026-08-31
+
+### Improved
+
+- **Keep link while Peak is visible** — idle disconnect is skipped while the Peak is still advertising, and after an idle GATT release the coordinator reconnects immediately if the device is still in range (no more waiting on the 15s tick or toggling lantern to force a reconnect).
+- **Link status sensor** — always-on `sensor.*_link_status` reports `connected` / `awake` / `asleep` for dashboards.
+
 ## [1.1.22] - 2026-08-18
 
 ### Fixed
