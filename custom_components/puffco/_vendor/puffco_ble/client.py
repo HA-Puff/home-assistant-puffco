@@ -25,6 +25,7 @@ from puffco_ble.encoding import (
     is_battery_charging,
     operating_state_name,
 )
+from puffco_ble.link_diag import log_link_diagnostic
 from puffco_ble.models import PuffcoData
 from puffco_ble.protocol import find_device_by_address
 
@@ -203,6 +204,29 @@ class PuffcoClient:
         if self._client is not None:
             self._client.reset_pairing_cache()
 
+    async def clear_session_bond(self) -> bool:
+        """Drop keys on the current link without scanning.
+
+        ``unpair()`` runs a BleakScanner sweep. That is the Windows CLI path.
+        Inside Home Assistant the sweep does not see ESPHome proxies, and it
+        blocks the coordinator until the scan times out.
+        """
+        self.reset_bond_state()
+        client = self._client
+        if client is None:
+            return False
+        try:
+            removed = await client.unpair()
+        except (BleakError, OSError, NotImplementedError) as err:
+            _LOGGER.debug("Session bond clear skipped: %s", err)
+            return False
+        _LOGGER.info(
+            "Cleared session bond for %s: %s",
+            self.address,
+            "removed" if removed else "no pairing on this link",
+        )
+        return bool(removed)
+
     @property
     def is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected
@@ -226,6 +250,18 @@ class PuffcoClient:
 
     def _connect_kwargs(self) -> dict:
         return {}
+
+    def _raise_with_link_diag(self, heal: str, err: BaseException) -> None:
+        """Log one link_diag line and re-raise with the category attached."""
+        diag = log_link_diagnostic(
+            address=self.address,
+            heal=heal,
+            error=err,
+            client=self._client,
+        )
+        if diag and "link_diag" not in str(err):
+            raise BleakError(f"{err} [link_diag {diag}]") from err
+        raise err
 
     def _on_disconnect(self, _client: PuffcoBleakClient) -> None:
         if self._connected_once:
@@ -329,14 +365,16 @@ class PuffcoClient:
         if reset_bond:
             await self._reset_os_bond(self._client)
 
-        await self._client.connect(timeout=self.connect_timeout)
-        if not self._client.is_connected:
-            raise BleakError(
-                f"GATT session did not stay connected to {self.address}"
-            )
-
-        self._connected_once = True
-        await self._finalize_connection()
+        try:
+            await self._client.connect(timeout=self.connect_timeout)
+            if not self._client.is_connected:
+                raise BleakError(
+                    f"GATT session did not stay connected to {self.address}"
+                )
+            self._connected_once = True
+            await self._finalize_connection()
+        except Exception as err:
+            self._raise_with_link_diag("connect", err)
 
     async def _connect_via_ha(self) -> None:
         """Connect using a HA-sourced BLEDevice (no scanning, BlueZ-friendly)."""
@@ -347,21 +385,25 @@ class PuffcoClient:
             )
         _LOGGER.info("Connecting to %s via HA Bluetooth...", self.address)
         self._connected_once = False
-        if self._connector is not None:
-            self._client = await self._connector(device, self._on_disconnect)
-        else:
-            self._client = PuffcoBleakClient(
-                device,
-                disconnected_callback=self._on_disconnect,
-                timeout=self.connect_timeout,
-            )
-            await self._client.connect(timeout=self.connect_timeout)
-        if not self._client.is_connected:
-            raise BleakError(
-                f"GATT session did not stay connected to {self.address}"
-            )
+        try:
+            if self._connector is not None:
+                self._client = await self._connector(device, self._on_disconnect)
+            else:
+                self._client = PuffcoBleakClient(
+                    device,
+                    disconnected_callback=self._on_disconnect,
+                    timeout=self.connect_timeout,
+                )
+                await self._client.connect(timeout=self.connect_timeout)
+            if not self._client.is_connected:
+                raise BleakError(
+                    f"GATT session did not stay connected to {self.address}"
+                )
+        except Exception as err:
+            self._raise_with_link_diag("connect", err)
         self._connected_once = True
         first_err: Exception | None = None
+        first_diag = ""
         # Prefer keeping an existing OS bond. Only clear it after a plain
         # reconnect still fails — stale keys are the usual cause when the Peak
         # is in pairing mode (blue bar) and Lorax replies never arrive.
@@ -378,9 +420,16 @@ class PuffcoClient:
                 # Keep the first failure: once the link is down every later step
                 # reports a misleading downstream symptom ("Service Discovery has
                 # not been performed yet", "Lorax service missing") that hides the
-                # real cause.
+                # real cause. Each attempt still gets its own link_diag line.
+                diag = log_link_diagnostic(
+                    address=self.address,
+                    heal=heal,
+                    error=err,
+                    client=self._client,
+                )
                 if first_err is None:
                     first_err = err
+                    first_diag = diag
                 _LOGGER.warning(
                     "Handshake for %s failed (heal=%s): %s",
                     self.address,
@@ -388,6 +437,8 @@ class PuffcoClient:
                     err,
                 )
         assert first_err is not None
+        if first_diag and "link_diag" not in str(first_err):
+            raise BleakError(f"{first_err} [link_diag {first_diag}]") from first_err
         raise first_err
 
     async def _reconnect_without_unpair(self) -> None:

@@ -314,7 +314,9 @@ class PuffcoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors={"base": "cannot_connect"},
             )
         return self.async_create_entry(
-            title=info.get("device_name") or fallback_name,
+            title=(info.get("device_name") or "").strip()
+            or (info.get("model") or "").strip()
+            or fallback_name,
             data={CONF_MAC: mac},
             options={
                 CONF_SHOW_DIAGNOSTICS: DEFAULT_SHOW_DIAGNOSTICS,

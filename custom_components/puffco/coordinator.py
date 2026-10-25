@@ -212,6 +212,15 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         return self._advertising or self.ble_connected
 
     @property
+    def link_status(self) -> str:
+        """Dashboard-friendly BLE link state: connected, awake, or asleep."""
+        if self.ble_connected:
+            return "connected"
+        if self.is_awake:
+            return "awake"
+        return "asleep"
+
+    @property
     def commands_reachable(self) -> bool:
         """True when a user command can reach the device (connect or wake via BLE)."""
         return self.is_awake
@@ -452,7 +461,7 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         )
         try:
             dev_reg = dr.async_get(self.hass)
-            if device := dev_reg.async_get_device({(DOMAIN, self.mac)}):
+            if device := self._device_entry():
                 dev_reg.async_update_device(
                     device.id,
                     model=model,
@@ -556,8 +565,19 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
                 f"{new_state.replace('_', ' ')}"
             )
 
+    def _device_entry(self):
+        """Device owned by this config entry.
+
+        Identifiers are unique per config entry. ``async_get_device`` is
+        deprecated and stops working in Home Assistant 2027.8.
+        """
+        return dr.async_get(self.hass).async_get_device_by_identifier(
+            (DOMAIN, self.mac),
+            self.config_entry.entry_id,
+        )
+
     def _event_payload(self, data: PuffcoData) -> dict:
-        device = dr.async_get(self.hass).async_get_device({(DOMAIN, self.mac)})
+        device = self._device_entry()
         return {
             "device_id": device.id if device else None,
             "mac": self.mac,
@@ -585,7 +605,7 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         """BLE link dropped (sleep, range, idle timeout)."""
         self._ble_connected = False
         self._needs_reconnect = True
-        device = dr.async_get(self.hass).async_get_device({(DOMAIN, self.mac)})
+        device = self._device_entry()
         self.hass.bus.async_fire(
             EVENT_DISCONNECTED,
             {"device_id": device.id if device else None, "mac": self.mac},
@@ -617,6 +637,10 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
             return False
         if not self._ble_connected or not self._client.is_connected:
             return False
+        # Keep the GATT session while the Peak is still advertising — dashboard
+        # use / nearby Peak should stay linked instead of dropping for battery.
+        if self._advertising:
+            return False
         if self.in_heat_session or self._write_in_progress:
             return False
         if self._last_gatt_activity is None:
@@ -625,7 +649,12 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         return elapsed >= IDLE_DISCONNECT_SECONDS
 
     async def _async_idle_disconnect(self) -> None:
-        """Release an idle GATT session so the Peak can sleep normally."""
+        """Release an idle GATT session so the Peak can sleep normally.
+
+        If the Peak is still visible after the release (still awake / in range),
+        reconnect immediately so the dashboard stays live without waiting for
+        the 15s reconnect tick.
+        """
         if not self._should_idle_disconnect():
             return
         _LOGGER.info(
@@ -641,9 +670,22 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
                 return
             self._ble_connected = False
             self._needs_reconnect = True
-            self._advertising = False
+            # Do not force advertising False — the Peak often starts advertising
+            # again right after GATT disconnect while still awake.
             await self._client.disconnect()
         self.async_update_listeners()
+
+        device = bluetooth.async_ble_device_from_address(
+            self.hass, self.mac, connectable=True
+        )
+        if device is None:
+            return
+        _LOGGER.info(
+            "%s still advertising after idle disconnect — reconnecting",
+            self.mac,
+        )
+        self._advertising = True
+        self._schedule_reconnect(device)
 
     @callback
     def _schedule_reconnect(self, device: BLEDevice | None = None) -> None:
@@ -1260,9 +1302,7 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         self._ble_connected = False
         async with self._lock:
             if clear_bond:
-                self._client.reset_bond_state()
-                with contextlib.suppress(Exception):
-                    await self._client.unpair()
+                await self._client.clear_session_bond()
             await self._client.disconnect()
             device = bluetooth.async_ble_device_from_address(
                 self.hass, self.mac, connectable=True

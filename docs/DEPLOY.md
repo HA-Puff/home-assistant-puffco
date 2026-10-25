@@ -28,6 +28,7 @@ Entity IDs: `{domain}.peak_pro_{suffix}_{name}` (MAC-based suffix).
 | `climate.*_heater` | Temp + profile presets (optional dashboard card) |
 | `switch.*_heat_session` | **Best for start/stop** — on = heat, off = abort |
 | `sensor.*_battery` | Battery % (+ charge attrs on dock) |
+| `sensor.*_link_status` | Always available: connected, awake, or asleep |
 | `sensor.*_heater_temperature` | Live chamber temperature |
 | `sensor.*_heat_time_remaining` | Seconds left in session |
 | `sensor.*_heat_cycle_timer` | Timer with `finishes_at` attribute |

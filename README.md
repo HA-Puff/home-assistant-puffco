@@ -30,7 +30,7 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for entity reference and troubleshooting.
 
 ## Requirements
 
-- Home Assistant **2024.6** or newer
+- Home Assistant **2026.8** or newer
 - Bluetooth adapter or **connectable** Bluetooth proxy (ESPHome)
 - Peak Pro with firmware **X** (flat) or **AG+** (Lorax) — see [docs/PREREQUISITES.md](docs/PREREQUISITES.md)
 
@@ -40,7 +40,7 @@ See [docs/DEPLOY.md](docs/DEPLOY.md) for entity reference and troubleshooting.
 |------|-----------------|
 | **Session** | Climate entity (start/abort, timer, preheat/active/fade) |
 | **Profiles** | Temp + duration (1–4), active profile select |
-| **Metrics** | Total/trip/daily dabs, heater temp, battery, charging |
+| **Metrics** | Total/trip/daily dabs, heater temp, battery, charging, link status |
 | **Lantern** | RGB light, effects (Solid, Breathing, Pulsing, …) |
 | **Automations** | Device triggers, services, event entity, blueprints |
 | **Reliability** | Auto-reconnect on wake, repair issue on link failure |
@@ -51,7 +51,7 @@ After setup, use these first:
 
 - `switch.*_heat_session` — **start/stop** a dab session (recommended)
 - `climate.*_heater` — profile preset + target temp (optional; use switch for on/off)
-- `sensor.*_battery` / `*_heater_temperature` / `*_heat_cycle_timer`
+- `sensor.*_battery` / `*_heater_temperature` / `*_heat_cycle_timer` / `*_link_status`
 - `number.*_profile_N_temperature` / `*_profile_N_duration`
 - `light.*_lantern`
 

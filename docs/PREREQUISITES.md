@@ -47,6 +47,19 @@ pip install -e "./puffco-ble[dev]"
 
 Copy `custom_components/puffco/` to your HA config directory (see [DEPLOY.md](DEPLOY.md)).
 
+## ESPHome Bluetooth proxies
+
+The Peak stores a bond for one Bluetooth radio. Home Assistant opens GATT on whichever proxy scores best, and a bond created on one proxy is rejected by the others with `Insufficient authentication` until the Peak is put in pairing mode again.
+
+Leave active connections on only one proxy, the one next to the Peak. Set every other proxy that can see it to advertisements only:
+
+```yaml
+bluetooth_proxy:
+  active: false
+```
+
+Those proxies still report that the Peak is awake. They cannot open a connection or take the bond. After that change, put the Peak in pairing mode once so the remaining proxy creates the bond.
+
 ## Environment variables (optional)
 
 ```bash

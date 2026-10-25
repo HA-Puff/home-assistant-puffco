@@ -23,6 +23,7 @@ from .const import (
     ATTR_OPERATING_STATE,
     ATTR_PROTOCOL,
     DOMAIN,
+    LINK_STATUS_OPTIONS,
     is_heat_cycle_state,
 )
 from .coordinator import PuffcoDataUpdateCoordinator
@@ -44,6 +45,7 @@ async def async_setup_entry(
         PuffcoHeatTimeRemainingSensor(coordinator),
         PuffcoHeatCycleTimer(coordinator),
         PuffcoBatterySensor(coordinator),
+        PuffcoLinkStatusSensor(coordinator),
         PuffcoFirmwareSensor(coordinator),
         PuffcoOperatingStateSensor(coordinator),
         PuffcoChamberTypeSensor(coordinator),
@@ -263,6 +265,43 @@ class PuffcoFirmwareSensor(PuffcoSensorBase):
             ATTR_FIRMWARE: self.coordinator.data.firmware,
             ATTR_ACTIVE_PROFILE: self.coordinator.data.active_profile + 1,
             "serial_number": self.coordinator.data.serial_number or None,
+        }
+
+
+class PuffcoLinkStatusSensor(PuffcoSensorBase):
+    """BLE link status for dashboards: connected / awake / asleep."""
+
+    _attr_translation_key = "link_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(LINK_STATUS_OPTIONS)
+    _attr_icon = "mdi:bluetooth-connect"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_link_status"
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self) -> str:
+        return self.coordinator.link_status
+
+    @property
+    def icon(self) -> str:
+        status = self.coordinator.link_status
+        if status == "connected":
+            return "mdi:bluetooth-connect"
+        if status == "awake":
+            return "mdi:bluetooth"
+        return "mdi:bluetooth-off"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            **self._connectivity_attributes(),
+            "advertising": self.coordinator.is_advertising,
         }
 
 

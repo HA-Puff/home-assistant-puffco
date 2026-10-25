@@ -81,14 +81,20 @@ class PuffcoBleakClient(BleakClient):
         self._lorax_notifications_active = False
         self._already_paired = False
         self._skip_explicit_pair = False
+        self.link_failure: dict[str, str] | None = None
 
     def reset_pairing_cache(self) -> None:
         """Forget in-session Lorax pairing state (after bond heal / disconnect)."""
         self._already_paired = False
         self.use_lorax_protocol = False
         self._lorax_notifications_active = False
+        self.link_failure = None
         self.transactions.clear()
         self.transaction_responses.clear()
+
+    def _record_link_failure(self, stage: str, detail: str) -> None:
+        """Remember the first Lorax-init failure for the reconnect diagnostic."""
+        self.link_failure = {"stage": stage, "detail": detail}
 
     # --- GATT routing ---
 
@@ -463,19 +469,28 @@ class PuffcoBleakClient(BleakClient):
         # An idle Peak drops a freshly-connected link within ~0.5s if the central
         # performs no GATT operation (WinRT only finalises the connection once we
         # request info), so the subscribe doubles as that first operation.
+        self.link_failure = None
         _LOGGER.info("Lorax init: enabling notifications...")
         try:
             await self._ensure_lorax_notifications()
         except (OSError, BleakError) as err:
+            self._record_link_failure("notify", str(err))
             _LOGGER.error("Failed to start Lorax notifications: %s", err)
             return False
 
         _LOGGER.info("Lorax init: reading protocol version...")
         version_data = await self._read_lorax_version_with_retry()
         if version_data is None:
+            self._record_link_failure(
+                "version", "Lorax version read failed (link dropped before settle)"
+            )
             _LOGGER.error("Lorax version read failed (link dropped before settle)")
             return False
         if len(version_data) < 2:
+            self._record_link_failure(
+                "version",
+                f"Invalid Lorax version response ({len(version_data)} bytes)",
+            )
             _LOGGER.error("Invalid Lorax version response (%s bytes)", len(version_data))
             return False
         self.lorax_proto_ver = struct.unpack("<H", bytes(version_data[:2]))[0]
@@ -510,11 +525,17 @@ class PuffcoBleakClient(BleakClient):
             ]
         for sub_mode, bond_mode in strategies:
             if not self.is_connected:
+                self._record_link_failure(
+                    "get_limits", "GATT dropped during Lorax init"
+                )
                 _LOGGER.warning("GATT dropped during Lorax init; reconnect needed")
                 return False
             if bond_mode == "pair":
                 await self._ensure_bonded()
                 if not self.is_connected:
+                    self._record_link_failure(
+                        "pair", "OS pair() dropped the GATT link"
+                    )
                     _LOGGER.warning(
                         "OS pair() dropped the GATT link; reconnect without pairing"
                     )
@@ -522,6 +543,9 @@ class PuffcoBleakClient(BleakClient):
             elif bond_mode == "trigger":
                 await self._trigger_bond()
                 if not self.is_connected:
+                    self._record_link_failure(
+                        "pair", "Bond trigger read dropped the GATT link"
+                    )
                     _LOGGER.warning(
                         "Bond trigger read dropped the GATT link; reconnect needed"
                     )
@@ -544,6 +568,7 @@ class PuffcoBleakClient(BleakClient):
                         reply_indicate=desired_indicate
                     )
                 except (OSError, BleakError) as err:
+                    self._record_link_failure("notify", str(err))
                     _LOGGER.error("Failed to start Lorax notifications: %s", err)
                     continue
 
@@ -574,11 +599,14 @@ class PuffcoBleakClient(BleakClient):
         auth_done = Event()
         auth_error: list[str] = []
         if not await self._lorax_authenticate(auth_done, auth_error):
-            _LOGGER.error(
-                "Lorax auth timed out (%s)",
-                auth_error[0] if auth_error else "no reply",
-            )
+            detail = auth_error[0] if auth_error else "no reply"
+            if not limits_ok:
+                detail = f"{detail}; GET_LIMITS also had no reply"
+            stage = "unlock" if detail.startswith("unlock") else "get_access_seed"
+            self._record_link_failure(stage, detail)
+            _LOGGER.error("Lorax auth timed out (%s)", detail)
             return False
+        self.link_failure = None
         _LOGGER.info("Lorax authentication succeeded")
         return True
 

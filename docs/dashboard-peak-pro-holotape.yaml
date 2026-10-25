@@ -75,10 +75,20 @@ cards:
             tap_action:
               action: toggle
           - type: custom:mushroom-template-card
+            entity: sensor.peak_pro_00059_0c_43_14_b7_91_9c_link_status
             primary: ''
-            secondary: LINK
-            icon: mdi:bluetooth-connect
-            icon_color: blue
+            secondary: >-
+              {{ states(entity) | upper }}
+            icon: >-
+              {% set s = states(entity) %}
+              {% if s == 'connected' %}mdi:bluetooth-connect
+              {% elif s == 'awake' %}mdi:bluetooth
+              {% else %}mdi:bluetooth-off{% endif %}
+            icon_color: >-
+              {% set s = states(entity) %}
+              {% if s == 'connected' %}green
+              {% elif s == 'awake' %}amber
+              {% else %}disabled{% endif %}
             tap_action:
               action: perform-action
               perform_action: button.press

@@ -33,4 +33,4 @@ jobs:
         run: |
           pip install -e "./puffco-ble[dev]"
       - name: pytest
-        run: pytest puffco-ble/tests -q --ignore=puffco-ble/tests/test_protocol.py
+        run: pytest puffco-ble/tests -q

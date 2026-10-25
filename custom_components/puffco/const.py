@@ -97,6 +97,8 @@ ATTR_FIRMWARE = "firmware"
 ATTR_ACTIVE_PROFILE = "active_profile"
 ATTR_OPERATING_STATE = "operating_state"
 
+LINK_STATUS_OPTIONS: tuple[str, ...] = ("connected", "awake", "asleep")
+
 PROFILE_COUNT = 4
 
 TEMPERATURE_FLOOR_C = 200.0

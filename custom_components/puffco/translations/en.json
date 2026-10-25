@@ -57,7 +57,7 @@
           "block_start_while_charging": "Block starting a session while charging",
           "fast_poll": "Faster background polling when idle (uses more Bluetooth traffic)",
           "wake_on_command": "Wait for the Peak to wake before failing a command (tap-to-wake)",
-          "idle_disconnect": "Release the Bluetooth link after ~3 minutes idle so the Peak can sleep"
+          "idle_disconnect": "Release the Bluetooth link after ~3 minutes idle so the Peak can sleep (skipped while advertising; reconnects immediately if still visible)"
         }
       }
     }
@@ -111,6 +111,14 @@
       "heat_time_remaining": { "name": "Heat time remaining" },
       "heat_cycle_timer": { "name": "Heat cycle timer" },
       "battery": { "name": "Battery" },
+      "link_status": {
+        "name": "Link status",
+        "state": {
+          "connected": "Connected",
+          "awake": "Awake",
+          "asleep": "Asleep"
+        }
+      },
       "firmware": { "name": "Firmware" },
       "operating_state": { "name": "Operating state" },
       "chamber_type": { "name": "Chamber type" },

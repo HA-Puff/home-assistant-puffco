@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here.
 
+## [1.1.25] - 2026-10-25
+
+### Added
+
+- **Link status sensor** — always-on `sensor.*_link_status` reports `connected`, `awake`, or `asleep`. Battery and temperature go unknown while the Peak sleeps; this sensor stays available so a dashboard can tell asleep from broken. Described under 1.1.23, and first included in this release.
+
+### Improved
+
+- **Keep the link while the Peak is awake** — idle disconnect still releases GATT after about 3 minutes so the Peak can sleep, but it waits while the Peak is advertising. If the Peak is still visible right after that release, the integration reconnects immediately instead of waiting on the 15-second tick.
+- **Setup title** — when the Peak has no Bluetooth name, the config entry uses the model (for example Guardian Peak Pro) instead of the MAC address.
+- **One active proxy** — prerequisites now say only one in-range ESPHome proxy may open connections. The others stay advertisement-only. A bond lives on one radio, and Home Assistant will use whichever active proxy scores best.
+
+### Fixed
+
+- **Clear bond no longer scans** — forgetting the bond from Home Assistant drops keys on the link it already has. The old path ran a host Bluetooth scan while holding the coordinator lock. That scan does not see ESPHome proxies, so Reconnect could sit until the integration was reloaded. The Windows command-line tool still scans.
+- **Device registry lookup** — device lookups use `async_get_device_by_identifier` scoped to this config entry. `async_get_device` is deprecated in Home Assistant 2026.8 and removed in 2027.8. This release requires Home Assistant 2026.8 or newer.
+- **Reconnect logs name the layer** — a failed reconnect is tagged as a bad GATT cache, a silent Lorax handshake, or the link dying during pairing.
+- **Vendored library matches `puffco-ble`** — the copy inside the integration is synced from the library, including the discovery rules already used by the published library (service UUIDs, known MAC prefixes, manufacturer data, and puffco/peak/proxy name hints).
+
 ## [1.1.24] - 2026-09-07
 
 ### Fixed
@@ -9,6 +28,8 @@ All notable changes to this project are documented here.
 - **ESPHome / BlueZ Lorax bond** — after `bond=none` leaves GET_LIMITS / auth silent (`Insufficient authentication`), retry with an explicit OS `pair()` while the Peak is in pairing mode. HA connect heal path now clears a stale bond only after plain reconnect fails.
 
 ## [1.1.23] - 2026-08-31
+
+These two behaviors were written up here and were not in the published 1.1.23 or 1.1.24 commits. They ship in 1.1.25.
 
 ### Improved
 
