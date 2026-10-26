@@ -101,3 +101,31 @@ def test_finite_round_rejects_inf():
 def test_parse_rgb_invalid():
     with pytest.raises(ValueError):
         parse_rgb_hex("FF")
+
+
+def test_proxy_fixed_point_round_trip():
+    from puffco_ble.encoding import chamber_type_name, peak_write_to_proxy, proxy_read_to_peak
+
+    temp = struct.pack("<f", 287.0)
+    proxy = peak_write_to_proxy("/u/app/hc/2/temp", temp)
+    assert struct.unpack("<i", proxy)[0] == 2870
+    assert proxy_read_to_peak("/u/app/hc/2/temp", proxy) == temp
+
+    time_s = struct.pack("<f", 30.0)
+    proxy_time = peak_write_to_proxy("/u/app/hc/0/time", time_s)
+    assert struct.unpack("<i", proxy_time)[0] == 6000
+    assert proxy_read_to_peak("/u/app/hc/0/time", proxy_time) == time_s
+
+    brightness = peak_write_to_proxy("/u/app/ui/lbrt", bytes([10, 20, 30, 40]))
+    assert struct.unpack("<i", brightness)[0] == 40 * 256
+    assert list(proxy_read_to_peak("/u/app/ui/lbrt", brightness)) == [40, 40, 40, 40]
+
+    dabs = struct.pack("<I", 1234)
+    assert struct.unpack("<f", proxy_read_to_peak("/p/app/odom/0/nc", dabs))[0] == 1234.0
+
+    color = bytes([255, 0, 0, 0, 1, 0, 0, 0])
+    assert peak_write_to_proxy("/p/app/ltrn/colr", color) == color
+    assert proxy_read_to_peak("/p/app/ltrn/colr", color) == color
+
+    assert chamber_type_name(5) == "proxy"
+    assert chamber_type_name(4) == "xl"

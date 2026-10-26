@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, PROFILE_COUNT
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoControllableEntity, PuffcoProfileDevice
+from .entity import PuffcoControllableEntity, PuffcoPeakOnlyEntity, PuffcoProfileDevice
 from puffco_ble.constants import VAPOR_LEVELS
 from puffco_ble.encoding import (
     ready_mode_option,
@@ -62,7 +62,7 @@ class PuffcoActiveProfileSelect(PuffcoControllableEntity, SelectEntity):
         await self.coordinator.async_write(_write)
 
 
-class PuffcoReadyModeSelect(PuffcoControllableEntity, SelectEntity):
+class PuffcoReadyModeSelect(PuffcoPeakOnlyEntity, PuffcoControllableEntity, SelectEntity):
     """Heat a profile when the Peak is lifted off the Power Dock."""
 
     _attr_translation_key = "ready_mode"

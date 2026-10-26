@@ -21,6 +21,7 @@ from .const import DOMAIN, LANTERN_SYNC_GUARD, LANTERN_WRITE_DEBOUNCE, PROFILE_C
 from .coordinator import PuffcoDataUpdateCoordinator
 from .entity import (
     PuffcoControllableEntity,
+    PuffcoPeakOnlyEntity,
     PuffcoPersistentStateEntity,
     PuffcoProfileDevice,
 )
@@ -220,7 +221,7 @@ class PuffcoLanternLight(PuffcoControllableEntity, LightEntity):
 
 
 class PuffcoProfileColorLight(
-    PuffcoProfileDevice, PuffcoPersistentStateEntity, LightEntity
+    PuffcoPeakOnlyEntity, PuffcoProfileDevice, PuffcoPersistentStateEntity, LightEntity
 ):
     """Profile accent color — visible on Controls; writes require an awake Peak."""
 

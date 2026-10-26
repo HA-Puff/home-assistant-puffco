@@ -157,6 +157,50 @@ PEAK_PRO_MODELS = {
     "4294967295": "Peak Pro",
 }
 
+# /p/sys/fw/api: high 16 bits = API series, low 16 bits = API version.
+LORAX_API_VERSION_PATH = "/p/sys/fw/api"
+API_SERIES_PEAK = 0
+API_SERIES_PROXY = 1
+
+# Proxy model codes overlap Peak codes; only valid when the API series is Proxy.
+# Model 0 is Onyx or Onyx Core, model 2 is Pine or Pine Core. The unit file
+# only exposes the model code, not the product code that separates the cores.
+PROXY_MODELS = {
+    "0": "Proxy (Onyx)",
+    "1": "Proxy (Haze)",
+    "2": "Proxy (Pine)",
+}
+
+# Proxy firmware stores these as int32 fixed point (value = raw / scale) where the
+# Peak uses float32. Profile paths are matched with the index removed.
+PROXY_FIXED_POINT_SCALES: dict[str, int] = {
+    "/p/app/htr/temp": 10,
+    "/p/app/htr/tcmd": 10,
+    "/p/app/stat/elap": 200,
+    "/p/app/stat/tott": 200,
+    "/p/app/ltrn/time": 200,
+    "/p/app/ltrn/remt": 200,
+    "/p/app/info/dpd": 256,
+    "/p/app/info/drem": 256,
+    "/p/app/tmpo": 10,
+    "/p/app/timo": 200,
+    "/p/bat/soc": 100,
+    "/p/bat/chg/etf": 200,
+    "/u/bat/msoc": 100,
+    "/u/app/lbws": 100,
+    "/u/app/hc/%N/temp": 10,
+    "/u/app/hc/%N/time": 200,
+    "/u/app/hc/%N/btmp": 10,
+    "/u/app/hc/%N/btim": 200,
+    "/u/app/hc/%N/intn": 256,
+}
+# Counters that are uint32 on the Proxy and float32 on the Peak.
+PROXY_UINT32_PATHS = frozenset(
+    {"/p/app/odom/0/nc", "/p/app/odom/0/tm", "/p/app/odom/1/nc", "/p/app/odom/1/tm", "/p/sys/uptm"}
+)
+# One brightness value (raw / 256) instead of the Peak's four uint8 zones.
+PROXY_SINGLE_BRIGHTNESS_PATH = "/u/app/ui/lbrt"
+
 
 class Characteristics:
     SERVICE_UUID = SERVICE_UUID

@@ -67,6 +67,17 @@ class PuffcoControllableEntity(PuffcoEntity):
         return self.coordinator.commands_reachable
 
 
+class PuffcoPeakOnlyEntity:
+    """Mixin: unavailable on a Proxy, which lacks this feature. List it first."""
+
+    @property
+    def available(self) -> bool:
+        data = self.coordinator.data
+        if data is not None and data.device_series == "proxy":
+            return False
+        return super().available
+
+
 class PuffcoProfileDevice:
     """Attach an entity to the child device for one heat profile."""
 

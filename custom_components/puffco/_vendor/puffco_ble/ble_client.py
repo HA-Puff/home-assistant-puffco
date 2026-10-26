@@ -48,6 +48,9 @@ from puffco_ble.constants import (
     REVISION_CHARS,
     SILABS_OTA_APP_VERSION_CHAR,
     SILABS_OTA_SERVICE_UUID,
+    API_SERIES_PEAK,
+    API_SERIES_PROXY,
+    LORAX_API_VERSION_PATH,
     DeviceCommands,
 )
 from puffco_ble.encoding import (
@@ -56,6 +59,8 @@ from puffco_ble.encoding import (
     pack_lorax_mode_command,
     pack_mode_command,
     parse_float,
+    peak_write_to_proxy,
+    proxy_read_to_peak,
     finite_float,
     safe_int_from_float,
     safe_int_from_float_bytes,
@@ -76,6 +81,8 @@ class PuffcoBleakClient(BleakClient):
         self.sequence_id = 0
         self.use_lorax_protocol = False
         self.lorax_proto_ver: int | None = None
+        self.api_series = API_SERIES_PEAK
+        self.api_version: int | None = None
         self.max_payload = 0
         self.max_files = 0
         self.max_cmds = 0
@@ -91,10 +98,16 @@ class PuffcoBleakClient(BleakClient):
         self._skip_explicit_pair = False
         self.link_failure: dict[str, str] | None = None
 
+    @property
+    def is_proxy(self) -> bool:
+        return self.use_lorax_protocol and self.api_series == API_SERIES_PROXY
+
     def reset_pairing_cache(self) -> None:
         """Forget in-session Lorax pairing state (after bond heal / disconnect)."""
         self._already_paired = False
         self.use_lorax_protocol = False
+        self.api_series = API_SERIES_PEAK
+        self.api_version = None
         self._lorax_notifications_active = False
         self.link_failure = None
         self.transactions.clear()
@@ -630,7 +643,29 @@ class PuffcoBleakClient(BleakClient):
             return False
         self.link_failure = None
         _LOGGER.info("Lorax authentication succeeded")
+        await self._detect_api_series()
         return True
+
+    async def _detect_api_series(self) -> None:
+        """Read the API series (Peak or Proxy) the way the app does after unlock."""
+        self.api_series = API_SERIES_PEAK
+        self.api_version = None
+        try:
+            raw = await asyncio.wait_for(self.lorax_read_short(LORAX_API_VERSION_PATH), 5)
+        except (asyncio.TimeoutError, BleakError) as err:
+            _LOGGER.debug("API series read failed, assuming Peak: %s", err)
+            return
+        if len(raw) < 4:
+            return
+        value = parse_uint32(raw)
+        self.api_series = value >> 16
+        self.api_version = value & 0xFFFF
+        _LOGGER.info(
+            "Lorax API series %s (%s) version %s",
+            self.api_series,
+            "Proxy" if self.api_series == API_SERIES_PROXY else "Peak",
+            self.api_version,
+        )
 
     async def _lorax_authenticate(
         self, done: Event, auth_error: list[str] | None = None
@@ -703,6 +738,8 @@ class PuffcoBleakClient(BleakClient):
 
     async def lorax_write_short(self, path: str, data: bytes | bytearray) -> None:
         bp = 4 if path.endswith("/name") else 0
+        if self.is_proxy:
+            data = peak_write_to_proxy(path, data)
         payload = self._write_short_cmd(0, bp, path, bytes(data))
         tx = self._make_transaction(LoraxOpCodes.WRITE_SHORT, path, payload)
         await self._send_lorax_command(tx["cmd"])
@@ -725,7 +762,7 @@ class PuffcoBleakClient(BleakClient):
         Truncate first, as the app does. Some files refuse truncate with
         ENOTSUP (134); those have a fixed size, so a plain write replaces them.
         """
-        payload = bytes(data)
+        payload = peak_write_to_proxy(path, data) if self.is_proxy else bytes(data)
         code: int | None = None
         for flags in (4, 0):
             self._last_lorax_error = None
@@ -765,11 +802,13 @@ class PuffcoBleakClient(BleakClient):
         result = self.transaction_responses.pop(f"{tx['sequenceId']}-{path}")
         if result is None:
             raise BleakError(f"Lorax read failed for path {path}")
-        if isinstance(result, (bytes, bytearray)):
-            return bytearray(result)
         if isinstance(result, str):
-            return bytearray(result.encode())
-        return bytearray(result)
+            data = bytearray(result.encode())
+        else:
+            data = bytearray(result)
+        if self.is_proxy:
+            return proxy_read_to_peak(path, data)
+        return data
 
     # --- Flat auth ---
 
@@ -810,8 +849,10 @@ class PuffcoBleakClient(BleakClient):
         else:
             model_key = raw.decode().strip()
         if return_name:
-            from puffco_ble.constants import PEAK_PRO_MODELS
+            from puffco_ble.constants import PEAK_PRO_MODELS, PROXY_MODELS
 
+            if self.is_proxy:
+                return PROXY_MODELS.get(model_key, "Proxy")
             return PEAK_PRO_MODELS.get(model_key, "Unknown Puffco")
         return model_key
 
@@ -990,9 +1031,13 @@ class PuffcoBleakClient(BleakClient):
         await self.lorax_write_short(path, pack_float(value))
 
     async def get_ready_mode_cycle(self) -> float | None:
+        if self.is_proxy:
+            return None
         return await self._read_lorax_float(LoraxCharacteristics.READY_MODE_CYCLE)
 
     async def set_ready_mode_cycle(self, cycle: float) -> None:
+        if self.is_proxy:
+            raise BleakError("Ready mode is not available on the Proxy")
         await self._write_lorax_float(LoraxCharacteristics.READY_MODE_CYCLE, cycle)
 
     async def get_max_battery_soc(self) -> float | None:
@@ -1214,6 +1259,9 @@ class PuffcoBleakClient(BleakClient):
 
     async def abort_heat_cycle(self) -> None:
         await self.send_mode_command(DeviceCommands.HEAT_CYCLE_ABORT)
+        if self.is_proxy:
+            await asyncio.sleep(0.1)
+            await self.send_mode_command(DeviceCommands.IDLE)
 
     async def get_device_birthday(self) -> str:
         raw = await self.read_gatt_char(Characteristics.DEVICE_BIRTHDAY)

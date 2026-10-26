@@ -709,6 +709,7 @@ class PuffcoClient:
                 protocol=self._protocol,
                 device_name=client.device_name,
                 model_name=await client.get_device_model(return_name=True),
+                device_series="proxy" if client.is_proxy else "peak",
                 stealth_mode=await client.get_stealth_mode(),
                 battery_charging=charging,
                 battery_charge_state=charge_state,
@@ -931,6 +932,8 @@ class PuffcoClient:
     async def set_profile_color(self, profile: int, r: int, g: int, b: int) -> None:
         async with self._lock:
             await self.ensure_connected()
+            if self.bleak.is_proxy:
+                raise ValueError("Profile colors are not supported on the Proxy yet")
             await self.bleak.set_profile_color(profile, r, g, b)
 
     async def set_profile_mood(self, profile: int, effect_name: str) -> None:
@@ -941,6 +944,8 @@ class PuffcoClient:
             raise ValueError(f"{effect_name!r} is not a multi-color pattern")
         async with self._lock:
             await self.ensure_connected()
+            if self.bleak.is_proxy:
+                raise ValueError("Profile patterns are not supported on the Proxy yet")
             await self.bleak.set_profile_mood(profile, effect.mood)
 
     async def set_lantern_brightness(self, value: int) -> None:
@@ -1008,7 +1013,11 @@ class PuffcoClient:
                 await bleak.send_lantern_brightness(brightness)
                 self._last_lantern_brightness = brightness
 
-            if effect.kind == "blob" and effect.mood is not None:
+            if bleak.is_proxy:
+                # Proxy lantern color is LED API 3 (compiled). Peak 8-byte
+                # colors and user-array moods are the wrong format here.
+                pass
+            elif effect.kind == "blob" and effect.mood is not None:
                 await bleak.send_lantern_mood(effect.mood)
             elif effect.kind == "preset" and effect.preset is not None:
                 preset = bytearray(effect.preset)

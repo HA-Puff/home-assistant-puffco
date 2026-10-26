@@ -28,7 +28,7 @@ from .const import (
     TEMPERATURE_FLOOR_C,
 )
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoControllableEntity, PuffcoProfileDevice
+from .entity import PuffcoControllableEntity, PuffcoPeakOnlyEntity, PuffcoProfileDevice
 from puffco_ble.encoding import clamp_brightness, finite_round
 
 
@@ -291,7 +291,9 @@ class PuffcoLanternBrightnessNumber(PuffcoControllableEntity, NumberEntity):
         )
 
 
-class _PuffcoLedSegmentBrightness(PuffcoControllableEntity, NumberEntity):
+class _PuffcoLedSegmentBrightness(
+    PuffcoPeakOnlyEntity, PuffcoControllableEntity, NumberEntity
+):
     _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.AUTO
     _attr_native_min_value = LED_BRIGHTNESS_MIN

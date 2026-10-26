@@ -6,12 +6,53 @@ import math
 import struct
 from typing import Iterable
 
+import re
+
 from puffco_ble.constants import (
     DeviceCommands,
     LanternMode,
+    PROXY_FIXED_POINT_SCALES,
+    PROXY_SINGLE_BRIGHTNESS_PATH,
+    PROXY_UINT32_PATHS,
     REVISION_CHARS,
     VAPOR_LEVELS,
 )
+
+_PROFILE_INDEX = re.compile(r"^(/u/app/hc/)\d+(/)")
+
+
+def _proxy_scale(path: str) -> int | None:
+    return PROXY_FIXED_POINT_SCALES.get(_PROFILE_INDEX.sub(r"\1%N\2", path))
+
+
+def proxy_read_to_peak(path: str, raw: bytes | bytearray) -> bytearray:
+    """Proxy value bytes in the Peak layout (float32, or four brightness bytes)."""
+    if len(raw) < 4:
+        return bytearray(raw)
+    if path == PROXY_SINGLE_BRIGHTNESS_PATH:
+        level = max(0, min(255, round(struct.unpack("<i", bytes(raw[:4]))[0] / 256)))
+        return bytearray([level] * 4)
+    if path in PROXY_UINT32_PATHS:
+        return bytearray(struct.pack("<f", struct.unpack("<I", bytes(raw[:4]))[0]))
+    scale = _proxy_scale(path)
+    if scale is None:
+        return bytearray(raw)
+    value = struct.unpack("<i", bytes(raw[:4]))[0]
+    engr = math.inf if value == -1 and path == "/p/bat/chg/etf" else value / scale
+    return bytearray(struct.pack("<f", engr))
+
+
+def peak_write_to_proxy(path: str, data: bytes | bytearray) -> bytes:
+    """Peak-layout write bytes converted to what the Proxy stores."""
+    if path == PROXY_SINGLE_BRIGHTNESS_PATH and data:
+        return struct.pack("<i", max(data) * 256)
+    scale = _proxy_scale(path)
+    if scale is None or len(data) != 4:
+        return bytes(data)
+    value = struct.unpack("<f", bytes(data))[0]
+    if not math.isfinite(value):
+        return bytes(data)
+    return struct.pack("<i", round(value * scale))
 
 
 def parse_float(data: bytes | bytearray) -> float:
@@ -285,9 +326,12 @@ def chamber_type_name(type_id: int) -> str:
     from puffco_ble.constants import ChamberType
 
     try:
-        return ChamberType(type_id).name.lower()
+        chamber = ChamberType(type_id)
     except ValueError:
         return f"unknown_{type_id}"
+    if chamber is ChamberType.TOAD:
+        return "proxy"
+    return chamber.name.lower()
 
 
 def parse_profile_color(data: bytes | bytearray) -> tuple[int, int, int]:

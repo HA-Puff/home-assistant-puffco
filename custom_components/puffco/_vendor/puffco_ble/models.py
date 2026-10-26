@@ -25,6 +25,7 @@ class PuffcoData:
     state_total_s: float | None = None
     device_name: str = ""
     model_name: str = ""
+    device_series: Literal["peak", "proxy"] = "peak"
     stealth_mode: bool = False
     battery_charging: bool = False
     battery_charge_state: str = "disconnected"
