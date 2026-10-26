@@ -109,6 +109,7 @@
       "dabs_per_day": { "name": "Dabs per day" },
       "heater_temp": { "name": "Heater temperature" },
       "heat_time_remaining": { "name": "Heat time remaining" },
+      "lantern_remaining": { "name": "Lantern time remaining" },
       "heat_cycle_timer": { "name": "Heat cycle timer" },
       "battery": { "name": "Battery" },
       "link_status": {
@@ -134,10 +135,11 @@
       "charging": { "name": "Charging" }
     },
     "number": {
-      "profile_temp": { "name": "Profile {profile} temperature" },
-      "profile_time": { "name": "Profile {profile} duration" },
-      "profile_boost_temp": { "name": "Profile {profile} boost temperature" },
-      "profile_boost_time": { "name": "Profile {profile} boost duration" },
+      "profile_temp": { "name": "Temperature" },
+      "profile_time": { "name": "Duration" },
+      "profile_boost_temp": { "name": "Boost temperature" },
+      "profile_boost_time": { "name": "Boost duration" },
+      "lantern_duration": { "name": "Lantern duration" },
       "lantern_brightness": { "name": "Lantern brightness" },
       "led_brightness_ring": { "name": "LED brightness (ring)" },
       "led_brightness_glass": { "name": "LED brightness (glass)" },
@@ -148,21 +150,44 @@
       "reconnect": { "name": "Reconnect" },
       "start_session": { "name": "Start session" },
       "abort_session": { "name": "Abort session" },
-      "boost_session": { "name": "Boost session" }
+      "boost_session": { "name": "Boost session" },
+      "master_off": { "name": "Power off" }
     },
     "light": {
       "lantern": { "name": "Lantern" },
-      "profile_color": { "name": "Profile {profile} color" }
+      "profile_color": { "name": "Color" }
     },
     "select": {
-      "active_profile": { "name": "Active profile" }
+      "active_profile": { "name": "Active profile" },
+      "ready_mode": {
+        "name": "Ready mode",
+        "state": {
+          "off": "Off",
+          "1": "Profile 1",
+          "2": "Profile 2",
+          "3": "Profile 3",
+          "4": "Profile 4"
+        }
+      },
+      "profile_intensity": {
+        "name": "Intensity",
+        "state": {
+          "smooth": "Smooth",
+          "bold": "Bold",
+          "intense": "Intense",
+          "extreme": "Extreme"
+        }
+      }
     },
     "switch": {
       "heat_session": { "name": "Heat session" },
-      "stealth_mode": { "name": "Stealth mode" }
+      "stealth_mode": { "name": "Stealth mode" },
+      "battery_preservation": { "name": "Battery preservation" },
+      "low_battery_indicator": { "name": "Low battery light" }
     },
     "text": {
-      "profile_name": { "name": "Profile {profile} name" }
+      "profile_name": { "name": "Name" },
+      "device_name": { "name": "Device name" }
     }
   },
   "services": {

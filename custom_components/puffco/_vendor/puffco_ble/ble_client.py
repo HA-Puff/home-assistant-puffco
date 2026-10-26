@@ -26,6 +26,13 @@ from puffco_ble.auth import (
     create_lorax_auth_token_seed_only,
 )
 from puffco_ble.buffer import Buffer
+from puffco_ble.lantern_effects import (
+    LANTERN_MOOD_SLOTS,
+    PROFILE_MOOD_SLOT_BASE,
+    LanternMood,
+    parse_lantern_color,
+    table_color_slot,
+)
 from puffco_ble.constants import (
     CHAR_UUID2LORAX_PATH,
     Characteristics,
@@ -74,6 +81,7 @@ class PuffcoBleakClient(BleakClient):
         self.max_cmds = 0
         self.lantern_enabled: bool | None = None
         self.lantern_color: bytearray | None = None
+        self.profile_color_raw: dict[int, bytearray] = {}
         self.stealth_mode: bool | None = None
         self.device_name = ""
         self.firmware_revision = ""
@@ -114,7 +122,7 @@ class PuffcoBleakClient(BleakClient):
             if "%N" in lorax_path:
                 lorax_path = lorax_path.replace("%N", str(number))
             if lorax_path.startswith("/u/app/hc/") and lorax_path.endswith("/colr"):
-                await self.lorax_write(lorax_path, data)
+                await self.lorax_write_short_checked(lorax_path, data)
                 return
             await self.lorax_write_short(lorax_path, data)
             return
@@ -204,19 +212,29 @@ class PuffcoBleakClient(BleakClient):
         """Send a Lorax opcode and wait for a matching reply notification."""
         done = Event()
         holder: list[bytes | None] = [None]
+        error_holder: list[int | None] = [None]
 
         def on_reply(data: bytes) -> None:
             if min_reply_len and len(data) < min_reply_len:
                 return
-            holder[0] = data
+            holder[0] = bytes(data)
             done.set()
 
-        tx = self._make_transaction(opcode, None, payload, callback=on_reply)
+        def on_error(code: int) -> None:
+            error_holder[0] = code
+            done.set()
+
+        tx = self._make_transaction(
+            opcode, None, payload, callback=on_reply, on_error=on_error
+        )
         await self._send_lorax_command(tx["cmd"])
         try:
             await wait_for(done.wait(), timeout=timeout)
         except TimeoutError:
             self.transactions.pop(tx["sequenceId"], None)
+            return None
+        if error_holder[0] is not None:
+            self._last_lorax_error = error_holder[0]
             return None
         return holder[0]
 
@@ -394,9 +412,13 @@ class PuffcoBleakClient(BleakClient):
                 if transaction["flag"]:
                     self.transaction_responses[f"{sequence_id}-{path}"] = None
                     transaction["deferred"]()
+                    return
+                on_error = transaction.get("on_error")
+                if on_error is not None:
+                    on_error(error_code)
                 return
 
-            payload = data[3:]
+            payload = bytes(data[3:])
             if path == LoraxCharacteristics.SOFTWARE_REVISION:
                 rev = parse_uint32(payload)
                 payload = firmware_int_to_string(rev)
@@ -654,6 +676,7 @@ class PuffcoBleakClient(BleakClient):
         callback: Callable | None = None,
         args: tuple | None = None,
         flag: bool = False,
+        on_error: Callable | None = None,
     ) -> dict[str, Any]:
         tx_id = self._next_sequence_id()
         cmd = self._make_command(tx_id, opcode, payload)
@@ -665,6 +688,7 @@ class PuffcoBleakClient(BleakClient):
             "deferred": callback,
             "args": args,
             "flag": flag,
+            "on_error": on_error,
         }
         self.transactions[tx_id] = transaction
         return transaction
@@ -694,6 +718,29 @@ class PuffcoBleakClient(BleakClient):
         payload = self._write_cmd(bytes(data))
         tx = self._make_transaction(LoraxOpCodes.WRITE, path, payload)
         await self._send_lorax_command(tx["cmd"])
+
+    async def lorax_write_short_checked(self, path: str, data: bytes | bytearray) -> None:
+        """Whole-file short write that waits for the Peak to accept it.
+
+        Truncate first, as the app does. Some files refuse truncate with
+        ENOTSUP (134); those have a fixed size, so a plain write replaces them.
+        """
+        payload = bytes(data)
+        code: int | None = None
+        for flags in (4, 0):
+            self._last_lorax_error = None
+            reply = await self._lorax_command_and_wait(
+                LoraxOpCodes.WRITE_SHORT,
+                self._write_short_cmd(0, flags, path, payload),
+                timeout=10,
+            )
+            if reply is not None:
+                return
+            code = getattr(self, "_last_lorax_error", None)
+            if code != 134:
+                break
+        detail = f" error {code}" if code else ""
+        raise BleakError(f"Lorax write-short failed for {path}{detail} ({len(payload)} bytes)")
 
     @staticmethod
     def _read_short_cmd(max_payload: int, path: str) -> bytes:
@@ -918,6 +965,67 @@ class PuffcoBleakClient(BleakClient):
             number=profile,
         )
 
+    async def get_profile_intensity(self, profile: int) -> float | None:
+        """Read vapor / cloud size for one heat-cycle slot. Lorax only."""
+        if not self.use_lorax_protocol:
+            return None
+        path = LoraxCharacteristics.PROFILE_INTENSITY.replace("%N", str(profile))
+        return finite_float(await self.lorax_read_short(path))
+
+    async def set_profile_intensity(self, profile: int, level: float) -> None:
+        """Write vapor / cloud size. Level is 0, 0.5, 1, or 1.5."""
+        if not self.use_lorax_protocol:
+            raise BleakError("Profile intensity requires Lorax firmware")
+        path = LoraxCharacteristics.PROFILE_INTENSITY.replace("%N", str(profile))
+        await self.lorax_write_short(path, pack_float(level))
+
+    async def _read_lorax_float(self, path: str) -> float | None:
+        if not self.use_lorax_protocol:
+            return None
+        return finite_float(await self.lorax_read_short(path))
+
+    async def _write_lorax_float(self, path: str, value: float) -> None:
+        if not self.use_lorax_protocol:
+            raise BleakError(f"{path} requires Lorax firmware")
+        await self.lorax_write_short(path, pack_float(value))
+
+    async def get_ready_mode_cycle(self) -> float | None:
+        return await self._read_lorax_float(LoraxCharacteristics.READY_MODE_CYCLE)
+
+    async def set_ready_mode_cycle(self, cycle: float) -> None:
+        await self._write_lorax_float(LoraxCharacteristics.READY_MODE_CYCLE, cycle)
+
+    async def get_max_battery_soc(self) -> float | None:
+        return await self._read_lorax_float(LoraxCharacteristics.MAX_BATTERY_SOC)
+
+    async def set_max_battery_soc(self, percent: float) -> None:
+        await self._write_lorax_float(LoraxCharacteristics.MAX_BATTERY_SOC, percent)
+
+    async def get_low_battery_warn(self) -> float | None:
+        return await self._read_lorax_float(LoraxCharacteristics.LOW_BATTERY_WARN)
+
+    async def set_low_battery_warn(self, level: float) -> None:
+        await self._write_lorax_float(LoraxCharacteristics.LOW_BATTERY_WARN, level)
+
+    async def get_lantern_time(self) -> float | None:
+        return finite_float(await self.read_gatt_char(Characteristics.LANTERN_TIME))
+
+    async def get_lantern_remaining(self) -> float | None:
+        return await self._read_lorax_float(LoraxCharacteristics.LANTERN_REMAINING)
+
+    async def set_device_name(self, name: str) -> None:
+        from puffco_ble.constants import DEVICE_NAME_MAX_LENGTH
+
+        trimmed = name.strip()[:DEVICE_NAME_MAX_LENGTH]
+        await self.write_gatt_char(
+            Characteristics.DEVICE_NAME, bytearray(trimmed.encode("utf-8"))
+        )
+        self.device_name = trimmed
+
+    async def master_off(self) -> None:
+        await self.send_lantern_status(False)
+        await self.send_mode_command(DeviceCommands.MASTER_OFF)
+
     async def get_profile_name(self, profile: int) -> str:
         raw = await self.read_gatt_char(Characteristics.PROFILE_NAME, number=profile)
         return raw.decode("utf-8", errors="ignore").strip("\x00")
@@ -933,16 +1041,34 @@ class PuffcoBleakClient(BleakClient):
         from puffco_ble.encoding import parse_profile_color
 
         raw = await self.read_gatt_char(Characteristics.PROFILE_COLOR, number=profile)
+        self.profile_color_raw[profile] = bytearray(raw)
+        parsed = parse_lantern_color(raw) if table_color_slot(raw) is not None else None
+        if parsed is not None:
+            return parsed[0]
         return parse_profile_color(raw)
 
     async def set_profile_color(self, profile: int, r: int, g: int, b: int) -> None:
         from puffco_ble.encoding import pack_static_lantern_color
 
+        payload = pack_static_lantern_color(r, g, b)
         await self.write_gatt_char(
             Characteristics.PROFILE_COLOR,
-            pack_static_lantern_color(r, g, b),
+            payload,
             number=profile,
         )
+        self.profile_color_raw[profile] = bytearray(payload)
+
+    async def set_profile_mood(self, profile: int, mood: LanternMood) -> None:
+        """Upload a multi-color mood to the profile's user array (1-4)."""
+        if not self.use_lorax_protocol:
+            raise BleakError("Profile moods need a Lorax (Peak Pro) connection")
+        slot = PROFILE_MOOD_SLOT_BASE + profile
+        await self.lorax_write_short_checked(f"/u/app/led/ca/{slot}", mood.colors)
+        if mood.offsets:
+            await self.lorax_write_short_checked(f"/u/app/led/oa/{slot}", mood.offsets)
+        table = mood.table_color(slot)
+        await self.write_gatt_char(Characteristics.PROFILE_COLOR, table, number=profile)
+        self.profile_color_raw[profile] = table
 
     async def get_chamber_type(self) -> int:
         data = await self.read_gatt_char(Characteristics.CHAMBER_TYPE)
@@ -1036,9 +1162,20 @@ class PuffcoBleakClient(BleakClient):
         )
 
     async def send_lantern_color_bytes(self, data: bytes | bytearray) -> None:
-        await self.write_gatt_char(
-            Characteristics.LANTERN_COLOR, bytearray(data)
-        )
+        await self.write_gatt_char(Characteristics.LANTERN_COLOR, bytearray(data))
+
+    async def send_lantern_mood(self, mood: LanternMood) -> None:
+        """Upload a multi-color mood to a user array and point the lantern at it."""
+        if not self.use_lorax_protocol:
+            raise BleakError("Lantern moods need a Lorax (Peak Pro) connection")
+        current = table_color_slot(self.lantern_color)
+        slot = LANTERN_MOOD_SLOTS[1] if current == LANTERN_MOOD_SLOTS[0] else LANTERN_MOOD_SLOTS[0]
+        await self.lorax_write_short_checked(f"/u/app/led/ca/{slot}", mood.colors)
+        if mood.offsets:
+            await self.lorax_write_short_checked(f"/u/app/led/oa/{slot}", mood.offsets)
+        table = mood.table_color(slot)
+        await self.write_gatt_char(Characteristics.LANTERN_COLOR, table)
+        self.lantern_color = table
 
     async def send_lantern_time(self, seconds: float) -> None:
         from puffco_ble.encoding import pack_float

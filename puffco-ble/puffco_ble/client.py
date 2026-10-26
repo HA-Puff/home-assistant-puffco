@@ -119,12 +119,38 @@ async def _fetch_slow_fields(client: PuffcoBleakClient) -> dict:
     serial_number = await _slow(
         "serial_number", client.get_serial_number(), ""
     )
+    ready_mode_cycle = await _slow(
+        "ready_mode_cycle", client.get_ready_mode_cycle(), None
+    )
+    max_battery_soc = await _slow(
+        "max_battery_soc", client.get_max_battery_soc(), None
+    )
+    low_battery_warn = await _slow(
+        "low_battery_warn", client.get_low_battery_warn(), None
+    )
+    lantern_time_s = await _slow(
+        "lantern_time", client.get_lantern_time(), None
+    )
+    lantern_remaining_s = await _slow(
+        "lantern_remaining", client.get_lantern_remaining(), None
+    )
+
+    profile_intensity: list[float | None] = []
+    for idx in range(4):
+        profile_intensity.append(
+            await _slow(
+                f"profile_intensity_{idx}",
+                client.get_profile_intensity(idx),
+                None,
+            )
+        )
 
     return {
         "profile_names": profile_names,
         "profile_colors_rgb": profile_colors_rgb,
         "profile_boost_temps_c": profile_boost_temps_c,
         "profile_boost_times_s": profile_boost_times_s,
+        "profile_intensity": profile_intensity,
         "lantern_brightness": max(led),
         "led_brightness": led,
         "chamber_type": chamber_type,
@@ -133,6 +159,11 @@ async def _fetch_slow_fields(client: PuffcoBleakClient) -> dict:
         "uptime_seconds": uptime_seconds,
         "total_heat_cycle_time_s": total_heat_cycle_time_s,
         "serial_number": serial_number,
+        "ready_mode_cycle": ready_mode_cycle,
+        "max_battery_soc": max_battery_soc,
+        "low_battery_warn": low_battery_warn,
+        "lantern_time_s": lantern_time_s,
+        "lantern_remaining_s": lantern_remaining_s,
     }
 
 
@@ -720,6 +751,7 @@ class PuffcoClient:
             profile_boost_times_s = list(
                 base.profile_boost_times_s or [0.0] * 4
             )
+            profile_intensity = list(base.profile_intensity or [None] * 4)
             if profile_index is not None:
                 idx = profile_index
                 profile_names[idx] = await _read_or(
@@ -734,10 +766,16 @@ class PuffcoClient:
                 profile_boost_times_s[idx] = await _read_or(
                     client.get_boost_time(idx), profile_boost_times_s[idx]
                 )
+                profile_intensity[idx] = await _read_or(
+                    client.get_profile_intensity(idx), profile_intensity[idx]
+                )
             lantern_on = (
                 bool(client.lantern_enabled)
                 if client.lantern_enabled is not None
                 else base.lantern_on
+            )
+            lantern_remaining_s = await _read_or(
+                client.get_lantern_remaining(), base.lantern_remaining_s
             )
             try:
                 charging, charge_state, charge_eta = await self._read_battery_charge(
@@ -808,6 +846,7 @@ class PuffcoClient:
                     client.get_battery_percentage(), base.battery_percent
                 ),
                 lantern_on=lantern_on,
+                lantern_remaining_s=lantern_remaining_s,
                 stealth_mode=await _read_or(
                     client.get_stealth_mode(),
                     client.stealth_mode
@@ -821,6 +860,7 @@ class PuffcoClient:
                 profile_colors_rgb=profile_colors_rgb,
                 profile_boost_temps_c=profile_boost_temps_c,
                 profile_boost_times_s=profile_boost_times_s,
+                profile_intensity=profile_intensity,
             )
 
     async def boost_session(self) -> None:
@@ -848,6 +888,41 @@ class PuffcoClient:
             await self.ensure_connected()
             await self.bleak.set_boost_time(seconds, profile)
 
+    async def set_profile_intensity(self, profile: int, level: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_profile_intensity(profile, level)
+
+    async def set_ready_mode_cycle(self, cycle: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_ready_mode_cycle(cycle)
+
+    async def set_max_battery_soc(self, percent: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_max_battery_soc(percent)
+
+    async def set_low_battery_warn(self, level: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_low_battery_warn(level)
+
+    async def set_lantern_time(self, seconds: float) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.send_lantern_time(seconds)
+
+    async def set_device_name(self, name: str) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_device_name(name)
+
+    async def master_off(self) -> None:
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.master_off()
+
     async def set_profile_name(self, profile: int, name: str) -> None:
         async with self._lock:
             await self.ensure_connected()
@@ -857,6 +932,16 @@ class PuffcoClient:
         async with self._lock:
             await self.ensure_connected()
             await self.bleak.set_profile_color(profile, r, g, b)
+
+    async def set_profile_mood(self, profile: int, effect_name: str) -> None:
+        from puffco_ble.lantern_effects import LANTERN_EFFECT_BY_NAME
+
+        effect = LANTERN_EFFECT_BY_NAME.get(effect_name)
+        if effect is None or effect.mood is None:
+            raise ValueError(f"{effect_name!r} is not a multi-color pattern")
+        async with self._lock:
+            await self.ensure_connected()
+            await self.bleak.set_profile_mood(profile, effect.mood)
 
     async def set_lantern_brightness(self, value: int) -> None:
         async with self._lock:
@@ -894,6 +979,7 @@ class PuffcoClient:
         effect_name: str,
         brightness: int | None = None,
         enabled: bool = True,
+        seconds: float | None = None,
     ) -> None:
         """Apply lantern color, effect, brightness, and on/off."""
         from puffco_ble.constants import LANTERN_TIME_SEC
@@ -922,7 +1008,9 @@ class PuffcoClient:
                 await bleak.send_lantern_brightness(brightness)
                 self._last_lantern_brightness = brightness
 
-            if effect.kind == "preset" and effect.preset is not None:
+            if effect.kind == "blob" and effect.mood is not None:
+                await bleak.send_lantern_mood(effect.mood)
+            elif effect.kind == "preset" and effect.preset is not None:
                 preset = bytearray(effect.preset)
                 if bleak.lantern_color != preset:
                     await bleak.send_lantern_color_bytes(preset)
@@ -935,7 +1023,8 @@ class PuffcoClient:
 
             if enabled:
                 if not already_on:
-                    await bleak.send_lantern_time(LANTERN_TIME_SEC)
+                    duration = LANTERN_TIME_SEC if seconds is None else seconds
+                    await bleak.send_lantern_time(duration)
                 await bleak.send_lantern_status(True)
             else:
                 await bleak.send_lantern_status(False)

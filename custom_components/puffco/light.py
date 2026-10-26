@@ -19,17 +19,25 @@ from homeassistant.util import color as color_util
 
 from .const import DOMAIN, LANTERN_SYNC_GUARD, LANTERN_WRITE_DEBOUNCE, PROFILE_COUNT
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoControllableEntity, PuffcoPersistentStateEntity
+from .entity import (
+    PuffcoControllableEntity,
+    PuffcoPersistentStateEntity,
+    PuffcoProfileDevice,
+)
+from puffco_ble.constants import LANTERN_TIME_SEC
 from puffco_ble.encoding import clamp_brightness, clamp_byte
 from puffco_ble.lantern_effects import (
     DEFAULT_LANTERN_EFFECT,
     LANTERN_EFFECT_BY_NAME,
     LANTERN_EFFECT_NAMES,
+    MOOD_EFFECT_NAMES,
+    parse_lantern_color,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_BRIGHTNESS = 255
+PROFILE_SOLID_EFFECT = "Solid"
 
 
 async def async_setup_entry(
@@ -80,33 +88,31 @@ class PuffcoLanternLight(PuffcoControllableEntity, LightEntity):
     def effect(self) -> str | None:
         return self._effect
 
-    @staticmethod
     def _parse_lantern_color(
+        self,
         data: bytes | bytearray | None,
     ) -> tuple[tuple[int, int, int], str] | None:
-        if not data or len(data) < 8:
-            return None
-        from puffco_ble.constants import LanternAnimation
-
-        raw = bytes(data)
-        for preset in LanternAnimation.ALL:
-            if raw == preset:
-                for effect in LANTERN_EFFECT_BY_NAME.values():
-                    if effect.preset == preset:
-                        return ((raw[0], raw[1], raw[2]), effect.name)
-        mode = raw[4]
-        effect_name = DEFAULT_LANTERN_EFFECT
-        for effect in LANTERN_EFFECT_BY_NAME.values():
-            if effect.mode is not None and int(effect.mode) == mode:
-                effect_name = effect.name
-                break
-        return ((raw[0], raw[1], raw[2]), effect_name)
+        # Mode byte identifies the animation. Recolored Pulsing / Rotating /
+        # Disco stay selected when RGB is not the old yellow preset.
+        return parse_lantern_color(data, selected=self._effect)
 
     @staticmethod
     def _clamp_rgb(rgb: tuple) -> tuple[int, int, int]:
         return (clamp_byte(rgb[0]), clamp_byte(rgb[1]), clamp_byte(rgb[2]))
 
     def _apply_turn_on_kwargs(self, kwargs: dict) -> None:
+        if (effect := kwargs.get("effect")) is not None:
+            self._effect = effect
+
+        current = LANTERN_EFFECT_BY_NAME.get(self._effect)
+        if current is not None and not current.uses_color and current.swatch is not None:
+            self._rgb = current.swatch
+            if (brightness := kwargs.get("brightness")) is not None:
+                clamped = clamp_brightness(brightness)
+                if clamped is not None:
+                    self._attr_brightness = clamped
+            return
+
         if (rgb := kwargs.get("rgb_color")) is not None:
             self._rgb = self._clamp_rgb(rgb)
         elif (rgbw := kwargs.get("rgbw_color")) is not None:
@@ -120,20 +126,17 @@ class PuffcoLanternLight(PuffcoControllableEntity, LightEntity):
                 color_util.color_xy_to_RGB(xy[0], xy[1])
             )
 
-        if (effect := kwargs.get("effect")) is not None:
-            self._effect = effect
-
         if (brightness := kwargs.get("brightness")) is not None:
             clamped = clamp_brightness(brightness)
             if clamped is not None:
                 self._attr_brightness = clamped
 
     async def _commit_lantern(self) -> None:
-        effect = LANTERN_EFFECT_BY_NAME.get(self._effect)
-        uses_color = effect is None or effect.uses_color
         r, g, b = self._rgb
-        if not uses_color:
-            r, g, b = 255, 255, 255
+        data = self.coordinator.data
+        seconds = LANTERN_TIME_SEC
+        if data is not None and data.lantern_time_s and data.lantern_time_s > 0:
+            seconds = data.lantern_time_s
 
         async def _write(client):
             await client.set_lantern(
@@ -143,6 +146,7 @@ class PuffcoLanternLight(PuffcoControllableEntity, LightEntity):
                 effect_name=self._effect,
                 brightness=clamp_brightness(self.brightness),
                 enabled=True,
+                seconds=seconds,
             )
 
         await self.coordinator.async_write(_write, refresh=False)
@@ -215,12 +219,16 @@ class PuffcoLanternLight(PuffcoControllableEntity, LightEntity):
         )
 
 
-class PuffcoProfileColorLight(PuffcoPersistentStateEntity, LightEntity):
+class PuffcoProfileColorLight(
+    PuffcoProfileDevice, PuffcoPersistentStateEntity, LightEntity
+):
     """Profile accent color — visible on Controls; writes require an awake Peak."""
 
     _attr_translation_key = "profile_color"
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_color_mode = ColorMode.RGB
+    _attr_supported_features = LightEntityFeature.EFFECT
+    _attr_effect_list = [PROFILE_SOLID_EFFECT, *MOOD_EFFECT_NAMES]
     _attr_icon = "mdi:palette"
 
     def __init__(
@@ -250,13 +258,35 @@ class PuffcoProfileColorLight(PuffcoPersistentStateEntity, LightEntity):
             return data.profile_colors_rgb[self._profile_index]
         return None
 
+    @property
+    def effect(self) -> str | None:
+        client = self.coordinator._client  # noqa: SLF001
+        bleak = getattr(client, "bleak", None)
+        raw = bleak.profile_color_raw.get(self._profile_index) if bleak else None
+        if not raw:
+            return None
+        parsed = parse_lantern_color(raw) if raw[3:4] == b"\x01" else None
+        return parsed[1] if parsed else PROFILE_SOLID_EFFECT
+
     async def async_turn_on(self, **kwargs) -> None:
         if not self.coordinator.commands_reachable:
             raise HomeAssistantError(
                 "Peak is asleep or out of range — wake it first."
             )
-        rgb = kwargs.get("rgb_color") or self.rgb_color or (255, 255, 255)
         profile = self._profile_index
+        effect = kwargs.get("effect")
+        rgb = kwargs.get("rgb_color")
+
+        if effect in MOOD_EFFECT_NAMES and rgb is None:
+            await self.coordinator.async_write(
+                lambda client: client.set_profile_mood(profile, effect),
+                profile_index=profile,
+            )
+            return
+        if rgb is None and effect is None and self.effect in MOOD_EFFECT_NAMES:
+            return
+
+        rgb = rgb or self.rgb_color or (255, 255, 255)
 
         async def _write(client):
             await client.set_profile_color(

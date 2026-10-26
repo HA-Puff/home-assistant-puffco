@@ -9,6 +9,7 @@ from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
 
 from .coordinator import PuffcoDataUpdateCoordinator
+from .helpers import profile_device_info
 
 
 class PuffcoEntity(PassiveBluetoothCoordinatorEntity[PuffcoDataUpdateCoordinator]):
@@ -64,6 +65,26 @@ class PuffcoControllableEntity(PuffcoEntity):
     @property
     def available(self) -> bool:
         return self.coordinator.commands_reachable
+
+
+class PuffcoProfileDevice:
+    """Attach an entity to the child device for one heat profile."""
+
+    _profile_index: int
+
+    @property
+    def device_info(self):
+        names = None
+        data = self.coordinator.data
+        if data is not None:
+            names = data.profile_names
+        parent = self.coordinator._device_entry()  # noqa: SLF001
+        return profile_device_info(
+            self.coordinator.mac,
+            self._profile_index,
+            names,
+            parent_device_id=parent.id if parent else None,
+        )
 
 
 class PuffcoSessionControllableEntity(PuffcoEntity):

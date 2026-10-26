@@ -106,6 +106,10 @@ TEMPERATURE_CEILING_C = 320.0
 # Peak app heat-cycle duration limits (seconds).
 PROFILE_TIME_FLOOR_S = 15
 PROFILE_TIME_CEILING_S = 120
+# Lantern-on duration written to /p/app/ltrn/time. The app always uses 7200.
+LANTERN_TIME_FLOOR_S = 60
+LANTERN_TIME_CEILING_S = 14400
+LANTERN_TIME_STEP_S = 60
 
 
 def is_heat_cycle_state(state: str | None) -> bool:

@@ -10,6 +10,7 @@ from puffco_ble.constants import (
     DeviceCommands,
     LanternMode,
     REVISION_CHARS,
+    VAPOR_LEVELS,
 )
 
 
@@ -120,6 +121,60 @@ def parse_lorax_short_number(
 
 def pack_float(value: float) -> bytes:
     return struct.pack("<f", value)
+
+
+def vapor_level_key(value: float | None) -> str | None:
+    """Map a profile intensity float to a vapor option key."""
+    if value is None or not math.isfinite(value):
+        return None
+    key, level = min(VAPOR_LEVELS, key=lambda item: abs(item[1] - value))
+    if abs(level - value) > 0.2:
+        return None
+    return key
+
+
+def ready_mode_option(value: float | None) -> str | None:
+    """Map a ready-mode cycle float to off or a 1-based profile option."""
+    if value is None or not math.isfinite(value):
+        return None
+    if value < 0:
+        return "off"
+    index = int(round(value))
+    if 0 <= index <= 3:
+        return str(index + 1)
+    return None
+
+
+def ready_mode_value(option: str) -> float:
+    """Map a ready-mode option to the float written on the device."""
+    if option == "off":
+        return -1.0
+    profile = int(option)
+    if profile < 1 or profile > 4:
+        raise ValueError(f"Unknown ready mode {option!r}")
+    return float(profile - 1)
+
+
+def battery_preservation_enabled(value: float | None) -> bool | None:
+    """True when the charge cap is below a full charge."""
+    if value is None or not math.isfinite(value):
+        return None
+    return value < 100.0
+
+
+def low_battery_warn_enabled(value: float | None) -> bool | None:
+    """True when the low-battery lamp threshold is the app's ON value."""
+    if value is None or not math.isfinite(value):
+        return None
+    return value >= 5.0
+
+
+def vapor_level_value(key: str) -> float:
+    """Map a vapor option key to the float written to the device."""
+    for name, level in VAPOR_LEVELS:
+        if name == key:
+            return level
+    raise ValueError(f"Unknown vapor level {key!r}")
 
 
 def pack_mode_command(command: DeviceCommands | int) -> bytes:

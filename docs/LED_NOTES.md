@@ -13,11 +13,40 @@ finished later.
   - Duration: `/p/app/ltrn/time` (`lanternTime`, float32). App uses `LANTERN_TIME_SEC = 7200`.
   - Scratchpad (for solid color): `/p/app/ltrn/scpd`, BLANK = 128 bytes of `0xFF`.
 
-## The base ring (NOT yet working)
+## The base ring (working: exclusive patterns)
 
 The base ring is the firmware's **mood-light** system, separate from the logo.
-It is driven by NVM color/offset arrays + a compiled mood, and on AW firmware
-it only **renders** from a **V3 `CompiledMoodLight`** blob.
+How a mood is written depends on the unit's LED API, not the firmware letter.
+
+### LED API 2 vs 3
+The app picks the LED API at connect time (`getLedApiVersion`):
+- apiVersion < `T` → led-api-1; < `AF` → led-api-2.
+- Otherwise it reads the heat-cycle 0 preheat color. If that file exists → **led-api-2**,
+  if it is `ENOENT` → **led-api-3**.
+
+Our Peak Pro (firmware AW) is **led-api-2**. On led-api-3 the app writes even solid
+colors as compiled blobs, so the fact that 8-byte colors work is a quick tell.
+
+**led-api-2 mood write (`UnitLedApiV2.writeMoodLight`), what the integration does:**
+1. Compile the mood and take `lamp.param` (`color`, `offset`, `bright`, `speed`, `anim`,
+   `plNum`, `plDenom`, `colorLen`).
+2. Write `/u/app/led/ca/{slot}`: 32 × `[R,G,B,0]` (128 B). Write-short, truncate flag 4.
+3. Write `/u/app/led/oa/{slot}`: `offset` as uint32 LE (80 B).
+4. Write the 8-byte **table** color to `/p/app/ltrn/colr`.
+5. The lantern slot alternates between 5 and 6 (whichever the current table color does not
+   point at), so the running pattern is never overwritten.
+
+Heat profiles work the same way: profile N (0-3) uses arrays `ca/{1+N}` / `oa/{1+N}` and the
+table color goes to `/u/app/hc/{N}/colr`. That file needs a short write (truncate flag 4),
+like the app's `writeRaw`. The old opcode-34 write with handle 0 returned `EBADF 9`.
+
+**led-api-3** (`UnitLedApiV3`) writes the serialized `CompiledMoodLight` (CBOR, lamp
+`pikaled2`) straight to `/p/app/ltrn/colr` as `raw`. On a led-api-2 unit every form of
+that write is refused: short write `EINVAL 22`, truncate `ENOTSUP 134`, file write via
+open/write `EINVAL 22` at any chunk size.
+
+The exclusive presets in `lantern_presets.py` are those compiled blobs (peach / AW).
+`lantern_effects.mood_from_blob` decodes the CBOR into the led-api-2 arrays at import.
 
 ### Relevant paths
 | Path | Meaning |
@@ -46,7 +75,10 @@ Lava Lamp default colors: `#4D0013,#FF7000,#FFD000` + tempo/density sliders.
 `version(1) + moodUlid(16) + moodName(32) + moodDateModified(u32) + moodType(1)
 + tempoFrac(float) + userColors(18 = 6×RGB) + originalMoodUlid(16)`
 
-## Why the base ring didn't light (experiments)
+## Early experiments (before the led-api-2 path worked)
+
+These ran before the offset array and app-compiled params were used. The table
+approach itself is correct; these attempts were missing pieces.
 
 | Attempt | Result |
 |---------|--------|
@@ -57,15 +89,14 @@ Lava Lamp default colors: `#4D0013,#FF7000,#FFD000` + tempo/density sliders.
 | Table-mode lantern → existing `ca/5` rainbow | **No base activity** |
 | Full V2 mood: `ca/5` red + table color + LANTERN_CUSTOM scratchpad | **No render**; `aclr` stayed idle-blue |
 
-**Conclusion:** AW accepts the V2 array/table writes but only **renders** the
-base ring from a **V3 `CompiledMoodLight`** blob written to `${target}ColorApi3`
-(same path `/p/app/ltrn/colr`, dataType `raw`). The official/web app runs Puffco's
-`MoodLightCompiler` (projectors → lamps → binary program) to produce it.
+Exclusive moods are a cloud ULID catalog (`MoodLightCategory.Exclusive`,
+`GET /api/v1/mood-lights?category=exclusive`). Their definitions were compiled with the
+web app's own `MoodLightCompiler` (app 3.13.47) for series `peach`, revision `AW`, and
+stored as `lantern_presets.py`.
 
-## To finish the base ring later (two options)
-1. **Capture & replay**: sniff the bytes the web/mobile app writes to
-   `/p/app/ltrn/colr` for a known pattern (e.g. solid red, Lava Lamp), then
-   replay / parameterize them. Fastest reliable path.
-2. **Port the compiler**: reproduce `MoodLightCompiler` + `CompiledMoodLight.serialize`
-   for the peach projector defs (large effort; see community reverse-engineering
-   writeups and the Puffco mobile app Lorax stack).
+## Still open
+- **Custom moods** (Lava Lamp, Confetti, user colors) need the compiler. Porting
+  `MoodLightCompiler` for the peach projectors is a large job; precompiling a fixed set the
+  same way as the exclusives is the cheap path.
+- **led-api-3 units**: the raw blob write is untested on real hardware. Those units would
+  need the app's write-short-or-file-write path for `lanternColorApi3`.

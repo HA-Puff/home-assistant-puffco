@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN, PROFILE_COUNT
 from puffco_ble.constants import ChamberType, OperatingState
@@ -25,6 +26,37 @@ PRESET_MODES: tuple[str, ...] = tuple(
 def is_on_dock(charge_state: str | None) -> bool:
     """True when the Peak is on the charging dock (including full)."""
     return bool(charge_state and charge_state != "disconnected")
+
+
+def profile_device_name(
+    profile_index: int, profile_names: list[str] | None
+) -> str:
+    """Child-device title: the name stored on the Peak, otherwise Profile N."""
+    if profile_names and len(profile_names) > profile_index:
+        custom = (profile_names[profile_index] or "").strip("\x00 ").strip()
+        if custom:
+            return custom
+    return f"Profile {profile_index + 1}"
+
+
+def profile_device_info(
+    mac: str,
+    profile_index: int,
+    profile_names: list[str] | None,
+    *,
+    parent_device_id: str | None = None,
+) -> DeviceInfo:
+    """One Home Assistant device per heat-cycle slot, under the Peak."""
+    number = profile_index + 1
+    info = DeviceInfo(
+        identifiers={(DOMAIN, f"{mac}_profile_{number}")},
+        name=profile_device_name(profile_index, profile_names),
+        manufacturer="Puffco",
+        model="Heat profile",
+    )
+    if parent_device_id:
+        info["via_device_id"] = parent_device_id
+    return info
 
 
 def preset_mode_for_profile(profile_index: int) -> str:

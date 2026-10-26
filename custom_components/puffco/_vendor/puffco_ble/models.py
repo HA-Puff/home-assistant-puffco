@@ -33,6 +33,12 @@ class PuffcoData:
     profile_colors_rgb: list[tuple[int, int, int]] | None = None
     profile_boost_temps_c: list[float] | None = None
     profile_boost_times_s: list[float] | None = None
+    profile_intensity: list[float | None] | None = None
+    ready_mode_cycle: float | None = None
+    max_battery_soc: float | None = None
+    low_battery_warn: float | None = None
+    lantern_time_s: float | None = None
+    lantern_remaining_s: float | None = None
     lantern_brightness: int = 255
     led_brightness: tuple[int, int, int, int] = (255, 255, 255, 255)
     chamber_type: str = "unknown"

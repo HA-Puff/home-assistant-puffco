@@ -50,6 +50,7 @@ from .const import (
     HEAT_POLL_INTERVAL,
     IDLE_DISCONNECT_SECONDS,
     POLL_INTERVAL,
+    PROFILE_COUNT,
     RECONNECT_INTERVAL,
     RECONNECT_MAX_ATTEMPTS,
     RECONNECT_WAKE_DELAY,
@@ -60,7 +61,7 @@ from .const import (
     WAKE_ON_COMMAND_TIMEOUT,
     is_heat_cycle_state,
 )
-from .helpers import is_on_dock
+from .helpers import is_on_dock, profile_device_info
 from puffco_ble.ble_client import PuffcoBleakClient
 from puffco_ble.client import PuffcoClient
 from puffco_ble.models import PuffcoData
@@ -471,6 +472,28 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         except Exception:
             _LOGGER.warning(
                 "Device registry update failed for %s", self.mac, exc_info=True
+            )
+        self._update_profile_devices(data)
+
+    def _update_profile_devices(self, data: PuffcoData) -> None:
+        """Keep each heat profile on its own child device."""
+        dev_reg = dr.async_get(self.hass)
+        parent = self._device_entry()
+        names = data.profile_names
+        for index in range(PROFILE_COUNT):
+            info = profile_device_info(
+                self.mac,
+                index,
+                names,
+                parent_device_id=parent.id if parent else None,
+            )
+            dev_reg.async_get_or_create(
+                config_entry_id=self.config_entry.entry_id,
+                identifiers=info["identifiers"],
+                name=info["name"],
+                manufacturer=info.get("manufacturer"),
+                model=info.get("model"),
+                via_device_id=parent.id if parent else None,
             )
 
     @callback
@@ -1256,6 +1279,7 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
         profile_index: int | None = None,
         refresh: bool = True,
         stealth_mode: bool | None = None,
+        updates: dict | None = None,
     ) -> None:
         self._write_in_progress = True
         await self._async_preempt_ble_for_write()
@@ -1280,6 +1304,8 @@ class PuffcoDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[PuffcoDat
                         self.data = replace(self.data, lantern_on=bool(enabled))
                 if stealth_mode is not None and self.data is not None:
                     self.data = replace(self.data, stealth_mode=stealth_mode)
+                if updates and self.data is not None:
+                    self.data = replace(self.data, **updates)
             self._mark_online()
             if not refresh and self.data is not None:
                 with contextlib.suppress(Exception):

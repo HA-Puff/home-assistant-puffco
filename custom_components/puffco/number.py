@@ -19,13 +19,16 @@ from .const import (
     LED_BRIGHTNESS_MAX,
     LED_BRIGHTNESS_MIN,
     PROFILE_COUNT,
+    LANTERN_TIME_CEILING_S,
+    LANTERN_TIME_FLOOR_S,
+    LANTERN_TIME_STEP_S,
     PROFILE_TIME_CEILING_S,
     PROFILE_TIME_FLOOR_S,
     TEMPERATURE_CEILING_C,
     TEMPERATURE_FLOOR_C,
 )
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoControllableEntity
+from .entity import PuffcoControllableEntity, PuffcoProfileDevice
 from puffco_ble.encoding import clamp_brightness, finite_round
 
 
@@ -44,6 +47,7 @@ async def async_setup_entry(
     entities.extend(
         [
             PuffcoLanternBrightnessNumber(coordinator),
+            PuffcoLanternDurationNumber(coordinator),
             PuffcoLedBrightnessRingNumber(coordinator),
             PuffcoLedBrightnessGlassNumber(coordinator),
             PuffcoLedBrightnessMainNumber(coordinator),
@@ -53,7 +57,9 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class PuffcoProfileSettingNumber(PuffcoControllableEntity, NumberEntity):
+class PuffcoProfileSettingNumber(
+    PuffcoProfileDevice, PuffcoControllableEntity, NumberEntity
+):
     """Shared base for per-profile settings shown under device configuration."""
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -218,6 +224,43 @@ class PuffcoProfileBoostTimeNumber(PuffcoProfileSettingNumber):
             await client.set_boost_time(profile, value)
 
         await self.coordinator.async_write(_write, profile_index=profile)
+
+
+class PuffcoLanternDurationNumber(PuffcoControllableEntity, NumberEntity):
+    """How long the lantern stays on after it is started."""
+
+    _attr_translation_key = "lantern_duration"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_native_min_value = LANTERN_TIME_FLOOR_S
+    _attr_native_max_value = LANTERN_TIME_CEILING_S
+    _attr_native_step = LANTERN_TIME_STEP_S
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_lantern_duration"
+
+    @property
+    def native_value(self) -> float | None:
+        data = self.coordinator.data
+        if data is None or data.lantern_time_s is None:
+            return None
+        if not math.isfinite(data.lantern_time_s):
+            return None
+        return finite_round(data.lantern_time_s)
+
+    async def async_set_native_value(self, value: float) -> None:
+        if not math.isfinite(value):
+            return
+
+        async def _write(client):
+            await client.set_lantern_time(value)
+
+        await self.coordinator.async_write(
+            _write, updates={"lantern_time_s": value}
+        )
 
 
 class PuffcoLanternBrightnessNumber(PuffcoControllableEntity, NumberEntity):

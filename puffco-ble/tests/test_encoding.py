@@ -10,6 +10,12 @@ from puffco_ble.encoding import (
     pack_mode_command,
     pack_static_lantern_color,
     parse_rgb_hex,
+    battery_preservation_enabled,
+    low_battery_warn_enabled,
+    ready_mode_option,
+    ready_mode_value,
+    vapor_level_key,
+    vapor_level_value,
 )
 
 
@@ -26,6 +32,27 @@ def test_mode_command_heat_cycle_start():
 def test_static_red_lantern():
     data = pack_static_lantern_color(0xFF, 0x00, 0x00, LanternMode.STATIC)
     assert list(data) == [0xFF, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]
+
+
+def test_vapor_levels_round_trip():
+    assert vapor_level_key(0.0) == "smooth"
+    assert vapor_level_key(0.5) == "bold"
+    assert vapor_level_key(1.0) == "intense"
+    assert vapor_level_key(1.5) == "extreme"
+    assert vapor_level_key(None) is None
+    assert vapor_level_value("intense") == 1.0
+
+
+def test_ready_mode_and_battery_settings():
+    assert ready_mode_option(-1) == "off"
+    assert ready_mode_option(0) == "1"
+    assert ready_mode_option(3) == "4"
+    assert ready_mode_value("off") == -1
+    assert ready_mode_value("2") == 1
+    assert battery_preservation_enabled(80) is True
+    assert battery_preservation_enabled(100) is False
+    assert low_battery_warn_enabled(10) is True
+    assert low_battery_warn_enabled(0) is False
 
 
 def test_parse_rgb_hex():

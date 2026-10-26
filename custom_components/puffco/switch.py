@@ -6,9 +6,21 @@ import time
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, STEALTH_SYNC_GUARD
+from puffco_ble.constants import (
+    FULL_BATTERY_SOC,
+    LOW_BATTERY_WARN_OFF,
+    LOW_BATTERY_WARN_ON,
+    PRESERVATION_BATTERY_SOC,
+)
+from puffco_ble.encoding import (
+    battery_preservation_enabled,
+    low_battery_warn_enabled,
+)
 from .coordinator import PuffcoDataUpdateCoordinator
 from .entity import PuffcoEntity, PuffcoControllableEntity, PuffcoSessionControllableEntity
 
@@ -19,7 +31,12 @@ async def async_setup_entry(
 ) -> None:
     coordinator: PuffcoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        [PuffcoHeatSessionSwitch(coordinator), PuffcoStealthSwitch(coordinator)]
+        [
+            PuffcoHeatSessionSwitch(coordinator),
+            PuffcoStealthSwitch(coordinator),
+            PuffcoBatteryPreservationSwitch(coordinator),
+            PuffcoLowBatteryIndicatorSwitch(coordinator),
+        ]
     )
 
 
@@ -88,4 +105,91 @@ class PuffcoStealthSwitch(PuffcoControllableEntity, PuffcoSwitchBase):
         await self.coordinator.async_write(
             lambda client: client.bleak.set_stealth_mode(False),
             stealth_mode=False,
+        )
+
+
+class _LoraxConfigSwitch(PuffcoControllableEntity, PuffcoSwitchBase):
+    """Device setting that exists on Lorax firmware only."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def _require_lorax(self) -> None:
+        data = self.coordinator.data
+        if data is not None and data.protocol != "lorax":
+            raise HomeAssistantError("This setting requires Lorax firmware.")
+
+
+class PuffcoBatteryPreservationSwitch(_LoraxConfigSwitch):
+    """Cap charging at 80%."""
+
+    _attr_translation_key = "battery_preservation"
+    _attr_icon = "mdi:battery-heart"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_battery_preservation"
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return battery_preservation_enabled(data.max_battery_soc)
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._require_lorax()
+
+        async def _write(client):
+            await client.set_max_battery_soc(PRESERVATION_BATTERY_SOC)
+
+        await self.coordinator.async_write(
+            _write, updates={"max_battery_soc": PRESERVATION_BATTERY_SOC}
+        )
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._require_lorax()
+
+        async def _write(client):
+            await client.set_max_battery_soc(FULL_BATTERY_SOC)
+
+        await self.coordinator.async_write(
+            _write, updates={"max_battery_soc": FULL_BATTERY_SOC}
+        )
+
+
+class PuffcoLowBatteryIndicatorSwitch(_LoraxConfigSwitch):
+    """Light the device when the battery is low."""
+
+    _attr_translation_key = "low_battery_indicator"
+    _attr_icon = "mdi:battery-alert"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_low_battery_indicator"
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return low_battery_warn_enabled(data.low_battery_warn)
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._require_lorax()
+
+        async def _write(client):
+            await client.set_low_battery_warn(LOW_BATTERY_WARN_ON)
+
+        await self.coordinator.async_write(
+            _write, updates={"low_battery_warn": LOW_BATTERY_WARN_ON}
+        )
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._require_lorax()
+
+        async def _write(client):
+            await client.set_low_battery_warn(LOW_BATTERY_WARN_OFF)
+
+        await self.coordinator.async_write(
+            _write, updates={"low_battery_warn": LOW_BATTERY_WARN_OFF}
         )

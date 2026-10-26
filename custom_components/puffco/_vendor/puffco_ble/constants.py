@@ -233,6 +233,7 @@ class LoraxCharacteristics:
     LANTERN_STATUS = "/p/app/ltrn/cmd"
     LANTERN_COLOR = "/p/app/ltrn/colr"
     LANTERN_TIME = "/p/app/ltrn/time"
+    LANTERN_REMAINING = "/p/app/ltrn/remt"
     LANTERN_BRIGHTNESS = "/u/app/ui/lbrt"
     DABS_PER_DAY = "/p/app/info/dpd"
     TOTAL_DAB_COUNT = "/p/app/odom/0/nc"
@@ -256,8 +257,33 @@ class LoraxCharacteristics:
 
     BOOST_TEMP = "/u/app/hc/%N/btmp"
     BOOST_TIME = "/u/app/hc/%N/btim"
+    # Cloud size / vapor. Float32. Firmware AC+. Not present on the flat GATT map.
+    PROFILE_INTENSITY = "/u/app/hc/%N/intn"
+    READY_MODE_CYCLE = "/u/app/rdym/hc"
+    MAX_BATTERY_SOC = "/u/bat/msoc"
+    LOW_BATTERY_WARN = "/u/app/lbws"
     TEMPERATURE_OVERRIDE = "/p/app/tmpo"
     TIME_OVERRIDE = "/p/app/timo"
+
+
+# App vapor picker. Values are the float written to PROFILE_INTENSITY.
+# Extreme is the 3DXL chamber step in the official app.
+VAPOR_LEVELS = (
+    ("smooth", 0.0),
+    ("bold", 0.5),
+    ("intense", 1.0),
+    ("extreme", 1.5),
+)
+
+# Ready mode stores the heat-cycle index. -1 is off.
+READY_MODE_OFF = -1.0
+# Battery preservation writes this max charge; 100 is a full charge.
+PRESERVATION_BATTERY_SOC = 80.0
+FULL_BATTERY_SOC = 100.0
+# Low-battery lamp. The app's constant is misspelled INIDCATOR and uses 10 / 0.
+LOW_BATTERY_WARN_ON = 10.0
+LOW_BATTERY_WARN_OFF = 0.0
+DEVICE_NAME_MAX_LENGTH = 29
 
 
 CHAR_UUID2LORAX_PATH = {

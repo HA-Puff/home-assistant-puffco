@@ -7,11 +7,16 @@ import logging
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import PuffcoDataUpdateCoordinator
-from .entity import PuffcoEntity, PuffcoSessionControllableEntity
+from .entity import (
+    PuffcoControllableEntity,
+    PuffcoEntity,
+    PuffcoSessionControllableEntity,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +37,7 @@ async def async_setup_entry(
             PuffcoStartSessionButton(coordinator),
             PuffcoAbortSessionButton(coordinator),
             PuffcoBoostSessionButton(coordinator),
+            PuffcoMasterOffButton(coordinator),
         ]
     )
 
@@ -102,3 +108,21 @@ class PuffcoBoostSessionButton(PuffcoSessionButtonBase):
 
     async def async_press(self) -> None:
         await self.coordinator.async_boost_session()
+
+
+class PuffcoMasterOffButton(PuffcoControllableEntity, PuffcoButtonBase):
+    """Power the Peak down. The app turns the lantern off first."""
+
+    _attr_translation_key = "master_off"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:power"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_master_off"
+
+    async def async_press(self) -> None:
+        async def _write(client):
+            await client.master_off()
+
+        await self.coordinator.async_write(_write, refresh=False)

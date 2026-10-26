@@ -43,6 +43,7 @@ async def async_setup_entry(
         PuffcoDabsPerDaySensor(coordinator),
         PuffcoHeaterTempSensor(coordinator),
         PuffcoHeatTimeRemainingSensor(coordinator),
+        PuffcoLanternRemainingSensor(coordinator),
         PuffcoHeatCycleTimer(coordinator),
         PuffcoBatterySensor(coordinator),
         PuffcoLinkStatusSensor(coordinator),
@@ -126,6 +127,28 @@ class PuffcoHeaterTempSensor(PuffcoSensorBase):
             temp = self.coordinator.data.heater_temp_c
             return temp if temp is not None and math.isfinite(temp) else None
         return None
+
+
+class PuffcoLanternRemainingSensor(PuffcoSensorBase):
+    """Seconds left on the lantern timer."""
+
+    _attr_translation_key = "lantern_remaining"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_icon = "mdi:timer-sand"
+
+    def __init__(self, coordinator: PuffcoDataUpdateCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.mac}_lantern_remaining"
+
+    @property
+    def native_value(self) -> float | None:
+        data = self.coordinator.data
+        if data is None or data.lantern_remaining_s is None:
+            return None
+        if not math.isfinite(data.lantern_remaining_s):
+            return None
+        return round(data.lantern_remaining_s)
 
 
 class PuffcoHeatTimeRemainingSensor(PuffcoSensorBase):
